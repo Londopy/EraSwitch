@@ -1,0 +1,20 @@
+# Normalise line endings to LF everywhere, in the repository *and* in the
+# working tree, on every platform. Without this, Git on Windows defaults to
+# core.autocrlf=true and checks files out with CRLF, which breaks byte-exact
+# test fixtures and shell scripts ("bad interpreter: /bin/sh^M").
+# Modern Windows editors all handle LF, so forcing it costs nothing.
+* text=auto eol=lf
+*.sh text eol=lf
+# batch files are the exception: cmd.exe misreads labels and long lines in
+# LF-only .cmd/.bat files, so they check out with CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.icns binary
+*.gif binary
+*.msi binary
+*.exe binary
+*.londo binary

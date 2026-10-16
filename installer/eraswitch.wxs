@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EraSwitch - MSI installer (WiX Toolset v7)
+
+  Built by the release workflow, once per architecture:
+    wix build -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
+              -d Version=1.2.3 -d BinDir=..\target\x86_64-pc-windows-msvc\release
+              -o eraswitch-1.2.3-x64.msi installer\eraswitch.wxs
+  The workflow also writes installer\license.rtf from LICENSE first
+  (WixUI shows the license from an RTF file).
+
+  One-time WiX setup on a dev machine: see windows-installer.md in the
+  londopy-style skill (dotnet tool, two extensions, EULA acceptance).
+  XML comments can't contain two hyphens in a row, so the commands live there.
+
+  Install scope: per-user by default (no UAC, %LOCALAPPDATA%\Programs\EraSwitch,
+  same folder as the Inno setup.exe). IT admins install machine-wide with:
+    msiexec /i eraswitch-<ver>-x64.msi ALLUSERS=2 MSIINSTALLPERUSER=""
+  Optional msiexec properties: DESKTOPSHORTCUT=0 (skip the desktop icon),
+  AUTOSTART=1 (launch at Windows startup).
+
+  Don't install the MSI and the setup.exe side by side; they share a folder.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!-- the workflow passes -d Version=<numeric version>; MSI versions must be
+       plain numbers, so prerelease suffixes like -rc1 are stripped first -->
+  <?ifndef Version ?>
+    <?define Version = "0.0.0" ?>
+  <?endif?>
+  <?ifndef BinDir ?>
+    <?define BinDir = "..\target\release" ?>
+  <?endif?>
+
+  <!-- Id replaces the old UpgradeCode GUID: any newer MSI with the same Id
+       upgrades an older one in place. Never reuse this Id for a different app. -->
+  <Package Id="Londopy.EraSwitch"
+           Name="EraSwitch"
+           Manufacturer="Londopy"
+           Version="$(var.Version)"
+           Language="1033"
+           Scope="perUserOrMachine">
+
+    <!-- same-version reinstall works (handy for testing); downgrades are refused -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of EraSwitch is already installed." />
+
+    <!-- one msi file, no loose .cab next to it -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Add/Remove Programs: icon and links -->
+    <Icon Id="AppIcon" SourceFile="..\assets\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Londopy/EraSwitch" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Londopy/EraSwitch/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Londopy/EraSwitch/releases" />
+
+    <!-- options for msiexec; same defaults as the Inno tasks (desktop icon on,
+         startup off). Secure so they survive into the elevated part of an
+         all-users install. -->
+    <Property Id="DESKTOPSHORTCUT" Value="1" Secure="yes" />
+    <Property Id="AUTOSTART" Value="0" Secure="yes" />
+
+    <!-- UI: license page + Install button, then a "Launch" checkbox (checked) -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch EraSwitch" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#MainExe]" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
+               Value="Wix4ShellExec_$(sys.BUILDARCHSHORT)"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <!-- close a running copy (tray apps ignore the Restart Manager prompt),
+         like TerminateApp() in the Inno script -->
+    <util:CloseApplication Id="CloseRunningApp" Target="EraSwitch.exe"
+                           CloseMessage="yes" TerminateProcess="1" Timeout="3"
+                           RebootPrompt="no" />
+
+    <Feature Id="Main" Title="EraSwitch" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="InstallSourceMarker" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="StartupEntry" />
+      <ComponentRef Id="CleanupConfig" />
+      <!-- OPTIONAL (CLI apps): <ComponentRef Id="PathEntry" /> -->
+    </Feature>
+
+    <!-- per-user: %LOCALAPPDATA%\Programs\EraSwitch
+         all users: C:\Program Files\EraSwitch (Program Files (x86) for the x86 msi) -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="EraSwitch">
+
+        <Component Id="MainExecutable">
+          <File Id="MainExe" Source="$(var.BinDir)\EraSwitch.exe" KeyPath="yes" />
+        </Component>
+
+        <!-- install.ini tells the in-app updater an MSI installed this copy, so an
+             all-users install updates through a new MSI instead of self-replace.
+             Created on install, removed on uninstall. -->
+        <Component Id="InstallSourceMarker">
+          <IniFile Id="InstallSource" Name="install.ini" Directory="INSTALLFOLDER"
+                   Section="install" Key="source" Value="msi" Action="addLine" />
+          <RegistryValue Root="HKMU" Key="Software\Londopy\EraSwitch"
+                         Name="InstallSource" Type="string" Value="msi" KeyPath="yes" />
+        </Component>
+
+        <!-- start with Windows, only when AUTOSTART=1 (off by default, like Inno).
+             The app's Startup tab can still turn it on later. -->
+        <Component Id="StartupEntry" Condition="AUTOSTART = 1">
+          <RegistryValue Root="HKMU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                         Name="EraSwitch" Type="string" Value="&quot;[#MainExe]&quot;"
+                         KeyPath="yes" />
+        </Component>
+
+        <!-- OPTIONAL (CLI apps): add the folder to PATH. Per-user installs only
+             (System="no" writes HKCU); uncomment with the ComponentRef above.
+        <Component Id="PathEntry">
+          <Environment Id="PathEntry" Name="PATH" Value="[INSTALLFOLDER]"
+                       Part="last" Action="set" System="no" Permanent="no" />
+          <RegistryValue Root="HKMU" Key="Software\Londopy\EraSwitch"
+                         Name="PathEntry" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+        -->
+      </Directory>
+    </StandardDirectory>
+
+    <!-- shortcuts sit directly in Start, no subfolder. HKMU = HKCU for a
+         per-user install, HKLM for all users; the value is just the keypath. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuShortcut" Name="EraSwitch" Target="[#MainExe]"
+                  WorkingDirectory="INSTALLFOLDER" Description="Switch your Windows 11 desktop to a Windows XP look and back with one click." />
+        <RegistryValue Root="HKMU" Key="Software\Londopy\EraSwitch"
+                       Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Condition="DESKTOPSHORTCUT = 1">
+        <Shortcut Id="DesktopShortcut" Name="EraSwitch" Target="[#MainExe]"
+                  WorkingDirectory="INSTALLFOLDER" Description="Switch your Windows 11 desktop to a Windows XP look and back with one click." />
+        <RegistryValue Root="HKMU" Key="Software\Londopy\EraSwitch"
+                       Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- uninstall removes %APPDATA%\EraSwitch (config, logs, .londo inbox),
+         matching the Inno [UninstallDelete] entry -->
+    <StandardDirectory Id="AppDataFolder">
+      <Directory Id="CONFIGFOLDER" Name="EraSwitch">
+        <Directory Id="INBOXFOLDER" Name="inbox" />
+        <Component Id="CleanupConfig">
+          <RemoveFile Id="RemoveInboxFiles" Directory="INBOXFOLDER" Name="*" On="uninstall" />
+          <RemoveFolder Id="RemoveInboxFolder" Directory="INBOXFOLDER" On="uninstall" />
+          <RemoveFile Id="RemoveConfigFiles" Name="*" On="uninstall" />
+          <RemoveFolder Id="RemoveConfigFolder" On="uninstall" />
+          <RegistryValue Root="HKMU" Key="Software\Londopy\EraSwitch"
+                         Name="CleanupConfig" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- .londo files: before the files are removed, let the app drop its
+         registration and hand the .londo double-click to another Londopy app
+         (see londo-files.md). Skipped during upgrades. Delete this block if the
+         app has no .londo files. -->
+    <CustomAction Id="LondoUnregister" FileRef="MainExe" ExeCommand="--londo-unregister"
+                  Execute="immediate" Return="ignore" />
+    <!-- put Windows 11 back if the era was on, while the exe and the snapshot
+         in AppData still exist. Waits for it to finish. Skipped during upgrades,
+         where the new version picks the era back up. -->
+    <CustomAction Id="RestoreWindows" FileRef="MainExe" ExeCommand="--restore"
+                  Execute="immediate" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RestoreWindows" Before="LondoUnregister"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="LondoUnregister" Before="InstallInitialize"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

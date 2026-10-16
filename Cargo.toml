@@ -1,0 +1,58 @@
+[package]
+name = "EraSwitch"
+version = "0.1.0"
+edition = "2021"
+description = "Switch your Windows 11 desktop to a Windows XP look and back with one click"
+repository = "https://github.com/Londopy/EraSwitch"
+license = "MIT"
+authors = ["Londopy"]
+
+[[bin]]
+name = "EraSwitch"
+path = "src/main.rs"
+
+[dependencies]
+tray-icon = "0.17"
+global-hotkey = "0.6"
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow"] }
+egui = "0.29"
+winit = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+winreg = "0.55"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+semver = { version = "1", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+zip = "9"
+self-replace = "1"
+log = "0.4"
+ctrlc = { version = "3", features = ["termination"] }
+chrono = { version = "0.4", features = ["serde"] }
+rfd = "0.14"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "UI_Notifications",
+    "Data_Xml_Dom",
+    "Foundation",
+]
+
+[build-dependencies]
+winresource = "0.1"
+
+# no panic = "abort": the panic hook puts the Windows 11 look back before we die
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

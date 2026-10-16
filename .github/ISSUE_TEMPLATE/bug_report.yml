@@ -1,0 +1,50 @@
+name: Bug report
+description: Something didn't switch, didn't switch back, or broke your desktop.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If EraSwitch left your desktop stuck, right-click the tray icon and pick **Back to Windows 11** first.
+        Please search existing issues before opening a new one.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: EraSwitch version
+      description: Settings > About shows it.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and build
+      description: Run `winver`.
+      placeholder: Windows 11 25H2, build 26200
+    validations:
+      required: true
+  - type: textarea
+    id: tools
+    attributes:
+      label: Installed tools
+      description: Versions of RetroBar and Open-Shell, and anything else that changes the taskbar or Start menu (ExplorerPatcher, StartAllBack, Windhawk...).
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The end of `%APPDATA%\EraSwitch\debug.log` (or `debug.log` next to the exe in portable mode).
+      render: text
+  - type: textarea
+    id: ai
+    attributes:
+      label: AI tools
+      description: Did an AI tool write or summarize this report? "None" is a fine answer.
+    validations:
+      required: true

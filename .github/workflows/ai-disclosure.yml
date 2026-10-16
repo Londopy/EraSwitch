@@ -1,0 +1,109 @@
+name: AI disclosure
+
+# Every pull request says whether AI tools were used and what they did, in the
+# template's "## AI tools" section ("None" is a fine answer). This check:
+#   - fails while that section is missing or still empty
+#   - fails when a commit lists an AI tool as author or co-author (tools are
+#     never authors; people are) or carries a "Generated with ..." line
+#   - fails when the PR says "None" but its commits or description show AI
+#     tool markers
+#   - labels disclosed PRs `ai-assisted`, so review knows to look closer
+# The policy itself is in CONTRIBUTING.md ("AI-assisted contributions").
+#
+# pull_request_target so it can label PRs from forks. It never checks out or
+# runs the PR's code: it only reads the description and commit messages, and
+# those reach the script through environment variables, never through ${{ }}
+# inside the script (which would let a PR body inject shell commands).
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write   # the ai-assisted label
+
+jobs:
+  disclosure:
+    name: AI tools disclosed
+    runs-on: ubuntu-latest
+    # the maintainer's own PRs and bots (Dependabot) are exempt
+    if: >-
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.user.type != 'Bot'
+    steps:
+      - name: Collect commit messages and authors
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/pulls/$PR/commits" --paginate \
+            --jq '.[] | "author: \(.commit.author.name) <\(.commit.author.email)>\n\(.commit.message)\n----"' \
+            > commits.txt
+          wc -l < commits.txt
+
+      - name: Check the disclosure
+        id: check
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+
+          body = os.environ.get("PR_BODY") or ""
+          commits = open("commits.txt", encoding="utf-8").read()
+          errors = []
+
+          # the "## AI tools" section, minus HTML comments (the template's hint)
+          m = re.search(r"^##\s*AI tools\s*$(.*?)(?=^##\s|\Z)", body, re.M | re.S | re.I)
+          answer = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S).strip() if m else ""
+          if not m:
+              errors.append('The PR description has no "## AI tools" section. Use the pull request template.')
+          elif not answer:
+              errors.append('The "## AI tools" section is empty. Write "None", or which tool and what it did.')
+          said_none = bool(re.fullmatch(r"(?i)\W*(none|no|n/?a|nothing)\W*", answer))
+
+          # AI tools as authors or co-authors, and tool-generated footers.
+          # Word boundaries keep people named Cody or Jules out of it.
+          tools = (r"\b(claude|anthropic|copilot|chatgpt|openai|gemini|codeium|windsurf|cursor|"
+                   r"devin|aider|tabnine|codewhisperer|amazon q|codex|deepseek|ai[- ]agent|"
+                   r"swe-agent)\b")
+          trailer = re.compile(rf"^(co-authored-by|author):[^\n]*{tools}", re.I | re.M)
+          footer = re.compile(r"(generated (with|by)[^\n]*\b(ai|claude|copilot|chatgpt|codex|cursor|gemini|"
+                              r"devin|aider)\b)|(^claude-session:)|(noreply@anthropic\.com)", re.I | re.M)
+          if trailer.search(commits):
+              errors.append("A commit lists an AI tool as author or co-author. Tools are never authors: "
+                            "rewrite those commits without it (git rebase -i, then force-push your "
+                            "branch) and say what the tool did in this PR instead.")
+          commit_marker = footer.search(commits)
+          if commit_marker:
+              errors.append("Remove AI tool footers (\"Generated with ...\", session links) from the "
+                            "commits; the disclosure belongs in the PR description.")
+          marker = commit_marker or footer.search(body) or trailer.search(commits)
+          if marker and said_none:
+              errors.append('The PR says "None" for AI tools, but it carries an AI tool marker '
+                            f'("{marker.group(0).strip()[:60]}"). Correct the disclosure.')
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"assisted={'false' if (said_none or not answer) else 'true'}\n")
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+          if errors:
+              summary.write("### AI disclosure: changes needed\n\n" + "\n".join(f"- {e}" for e in errors) + "\n")
+              for e in errors:
+                  print(f"::error title=AI disclosure::{e}")
+              sys.exit(1)
+          summary.write(f"### AI disclosure\n\n{answer}\n")
+          print("disclosure ok:", answer[:200])
+          PY
+
+      - name: Label AI-assisted PRs
+        if: steps.check.outputs.assisted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh label create ai-assisted --repo "$REPO" --color 8957e5 \
+            --description "Contributor used AI tools (see the PR's AI tools section)" 2>/dev/null || true
+          gh pr edit "$PR" --repo "$REPO" --add-label ai-assisted

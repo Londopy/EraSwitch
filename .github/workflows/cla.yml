@@ -1,0 +1,157 @@
+name: CLA
+
+# Every contributor accepts CLA.md once, by commenting the sentence below on a
+# pull request. Signatures are recorded on the cla-signatures branch of this
+# repository (signatures/version1/cla.json, the same format nexium's CLA
+# assistant used, so its signatures carry over). Each PR's head commit gets a
+# "CLA" status: make it a required status check (Settings > Rules) so an
+# unsigned PR can't merge. Comment "recheck" to run it again.
+#
+# Same rules as nexium. Written in-repo because the action nexium uses
+# (contributor-assistant/github-action) was archived in March 2026.
+#
+# pull_request_target so it can comment and set statuses on PRs from forks.
+# It never checks out or runs PR code; comment text reaches the script only
+# through environment variables.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write        # the signatures file on cla-signatures
+  pull-requests: write   # the "please sign" comment
+  statuses: write        # the CLA status on the head commit
+
+# one signature write at a time, so two people signing at once can't collide
+concurrency:
+  group: cla-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    # the job itself always passes; the result is the "CLA" commit status,
+    # which a signing comment can flip to success later (a failed job can't)
+    name: CLA check
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (github.event.comment.body == 'recheck' ||
+        startsWith(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA')))
+    steps:
+      - name: Check signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REPO_ID: ${{ github.repository_id }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENTER_ID: ${{ github.event.comment.user.id }}
+          COMMENT_AT: ${{ github.event.comment.created_at }}
+          CLA_URL: https://github.com/${{ github.repository }}/blob/HEAD/CLA.md
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, subprocess, sys
+
+          SENTENCE = "I have read the CLA Document and I hereby sign the CLA"
+          BRANCH, PATH = "cla-signatures", "signatures/version1/cla.json"
+          ALLOW = {"londopy"}            # the maintainer; any "...[bot]" is allowed too
+          MARK = "<!-- cla-check -->"     # finds our own comment to update it
+          E = os.environ
+          repo, pr = E["REPO"], E["PR"]
+
+          def gh(*args, data=None, ok_missing=False, pages=False):
+              cmd = ["gh", "api", *args] + (["--paginate", "--slurp"] if pages else [])
+              if data is not None:
+                  cmd += ["--input", "-"]
+              r = subprocess.run(cmd, input=json.dumps(data) if data is not None else None,
+                                 capture_output=True, text=True)
+              if r.returncode != 0:
+                  if ok_missing and ("404" in r.stderr or "Not Found" in r.stderr):
+                      return None
+                  sys.exit(f"gh api {' '.join(args)} failed: {r.stderr.strip()}")
+              out = json.loads(r.stdout) if r.stdout.strip() else {}
+              return [item for page in out for item in page] if pages else out
+
+          def load():
+              f = gh(f"repos/{repo}/contents/{PATH}?ref={BRANCH}", ok_missing=True)
+              if f is None:
+                  return {"signedContributors": []}, None
+              return json.loads(base64.b64decode(f["content"])), f["sha"]
+
+          def save(doc, sha, who):
+              if gh(f"repos/{repo}/branches/{BRANCH}", ok_missing=True) is None:
+                  default = gh(f"repos/{repo}")["default_branch"]
+                  head = gh(f"repos/{repo}/git/ref/heads/{default}")["object"]["sha"]
+                  gh(f"repos/{repo}/git/refs", "-X", "POST",
+                     data={"ref": f"refs/heads/{BRANCH}", "sha": head})
+              body = {"message": f"CLA: {who} signed", "branch": BRANCH,
+                      "content": base64.b64encode((json.dumps(doc, indent=2) + "\n").encode()).decode()}
+              if sha:
+                  body["sha"] = sha
+              gh(f"repos/{repo}/contents/{PATH}", "-X", "PUT", data=body)
+
+          info = gh(f"repos/{repo}/pulls/{pr}")
+          head_sha = info["head"]["sha"]
+
+          # who has to sign: the PR's author and every commit author
+          people, unlinked = {}, []
+          people[info["user"]["login"].lower()] = info["user"]["login"]
+          for c in gh(f"repos/{repo}/pulls/{pr}/commits", pages=True):
+              if c.get("author") and c["author"].get("login"):
+                  people[c["author"]["login"].lower()] = c["author"]["login"]
+              else:
+                  unlinked.append(c["sha"][:7])
+          needed = {k: v for k, v in people.items() if k not in ALLOW and not k.endswith("[bot]")}
+
+          doc, sha = load()
+          signed = {s["name"].lower() for s in doc.get("signedContributors", [])}
+
+          # a signing comment counts only for the person who wrote it
+          if E["EVENT"] == "issue_comment" and E["COMMENT_BODY"].strip().startswith(SENTENCE):
+              who = E["COMMENTER"]
+              if who.lower() not in signed:
+                  doc.setdefault("signedContributors", []).append({
+                      "name": who, "id": int(E["COMMENTER_ID"]), "comment_id": int(E["COMMENT_ID"]),
+                      "created_at": E["COMMENT_AT"], "repoId": int(E["REPO_ID"]), "pullRequestNo": int(pr)})
+                  save(doc, sha, who)
+                  signed.add(who.lower())
+
+          missing = sorted(v for k, v in needed.items() if k not in signed)
+          ok = not missing and not unlinked
+          gh(f"repos/{repo}/statuses/{head_sha}", "-X", "POST", data={
+              "state": "success" if ok else "failure", "context": "CLA",
+              "description": "All contributors have signed the CLA" if ok
+                             else f"Waiting on: {', '.join(missing) or 'unlinked commit authors'}"[:139],
+              "target_url": E["CLA_URL"]})
+
+          # one comment per PR, kept up to date
+          if ok:
+              text = f"{MARK}\nAll contributors have accepted the CLA. Thank you!"
+          else:
+              lines = [MARK, "Thank you for the pull request. Before it can be merged, please read the "
+                       f"[Contributor License Agreement]({E['CLA_URL']}) and accept it by commenting this "
+                       "sentence exactly:", "", f"> {SENTENCE}", "",
+                       "You keep your copyright; the agreement lets the project distribute your work under "
+                       "its license. You only sign once, for every later pull request too.", ""]
+              if missing:
+                  lines.append("Still to sign: " + ", ".join(f"@{m}" for m in missing))
+              if unlinked:
+                  lines.append("These commits have an author email that isn't linked to a GitHub account, so "
+                               f"nobody can sign for them: {', '.join(unlinked)}. Add the email to your GitHub "
+                               "account, or rewrite the commits with one that is.")
+              text = "\n".join(lines)
+          mine = [c for c in gh(f"repos/{repo}/issues/{pr}/comments", pages=True) if MARK in (c.get("body") or "")]
+          if mine:
+              if mine[0]["body"] != text:
+                  gh(f"repos/{repo}/issues/comments/{mine[0]['id']}", "-X", "PATCH", data={"body": text})
+          elif not ok:
+              gh(f"repos/{repo}/issues/{pr}/comments", "-X", "POST", data={"body": text})
+
+          print("CLA ok" if ok else f"CLA missing: {missing} unlinked: {unlinked}")
+          PY

@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# editors
+.idea/
+.vscode/
+*.swp
+
+# rust
+target/
+
+# build output
+*.exe
+*.pdb
+*.msi
+*.wixpdb
+installer/output/
+installer/license.rtf
+
+# secrets
+.env
+*.key

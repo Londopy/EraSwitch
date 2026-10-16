@@ -1,0 +1,27 @@
+name: Feature request
+description: A new era, a new piece to switch, or a better way to do it.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like EraSwitch to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you've tried instead?
+  - type: textarea
+    id: ai
+    attributes:
+      label: AI tools
+      description: Did an AI tool write or summarize this request? "None" is a fine answer.
+    validations:
+      required: true
