@@ -19,6 +19,26 @@ button, the Luna Start menu, the blue taskbar) and back to stock Windows 11 with
 one hotkey. Your PC keeps working exactly the same: same apps, same updates, same everything.
 Only the shell changes.
 
+## What it looks like
+
+**Windows 11, as usual:**
+
+![The stock Windows 11 taskbar](docs/screenshots/taskbar-windows11.png)
+
+**One click on the tray icon later:** RetroBar's XP taskbar with the green start button
+(XP Blue theme shown; Olive Green, Silver and others are a dropdown away)...
+
+![The Windows XP taskbar drawn by RetroBar](docs/screenshots/taskbar-xp.png)
+
+**...and the two-column Luna Start menu, from Open-Shell:**
+
+<p align="center">
+  <img src="docs/screenshots/start-menu-xp.png" alt="The Windows XP Luna Start menu drawn by Open-Shell" width="300">
+</p>
+
+Click the tray icon again and it's the first picture again. (Window titles and the account
+name are blurred in these shots.)
+
 <!-- demo.gif goes here once it's recorded:
 <p align="center">
   <img src="assets/demo.gif" alt="EraSwitch in action" width="720">
