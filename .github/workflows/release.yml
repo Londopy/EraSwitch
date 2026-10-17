@@ -124,12 +124,18 @@ jobs:
 
       # WiX v7. The maintenance fee only applies above US$10k/yr revenue, but
       # the EULA must be accepted for the binaries to run.
+      # The EULA comes first: WiX 7 refuses every other command (WIX7015) until
+      # it's accepted. pwsh only fails a step on the last command's exit code,
+      # so each one is checked by hand.
       - name: Install WiX
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 7.0.0
-          wix extension add --global WixToolset.UI.wixext/7.0.0 WixToolset.Util.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "installing wix failed" }
           wix eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw "accepting the WiX EULA failed" }
+          wix extension add --global WixToolset.UI.wixext/7.0.0 WixToolset.Util.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "adding the WiX extensions failed" }
 
       - name: Build MSI
         shell: pwsh
