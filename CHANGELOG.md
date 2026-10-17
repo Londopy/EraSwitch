@@ -8,7 +8,7 @@ what appears on its GitHub release page. Validated in CI by
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-16
+## [0.1.0] - 2026-10-17
 
 ### Added
 
