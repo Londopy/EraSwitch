@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon-256.png" alt="EraSwitch icon" width="128">
+</p>
+
 # EraSwitch
 
 [![CI](https://github.com/Londopy/EraSwitch/actions/workflows/ci.yml/badge.svg)](https://github.com/Londopy/EraSwitch/actions/workflows/ci.yml)
