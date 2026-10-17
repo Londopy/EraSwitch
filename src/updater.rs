@@ -16,7 +16,7 @@
 //   semver = { version = "1", features = ["serde"] }
 //   sha2 = "0.10"
 //   hex = "0.4"
-//   zip = "2"
+//   zip = "9"
 //   self-replace = "1"
 //   anyhow = "1"
 //   log = "0.4"

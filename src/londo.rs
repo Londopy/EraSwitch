@@ -11,7 +11,7 @@
 // Cargo.toml:
 //   serde = { version = "1", features = ["derive"] }
 //   toml = "0.8"
-//   zip = "2"
+//   zip = "9"
 //   anyhow = "1"
 //   [target.'cfg(windows)'.dependencies]
 //   winreg = "0.55"
