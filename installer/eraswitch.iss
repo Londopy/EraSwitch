@@ -150,6 +150,129 @@ Filename: "{app}\{#AppExeName}"; \
 Type: filesandordirs; Name: "{userappdata}\{#AppName}"
 
 [Code]
+// ---- helper programs ---------------------------------------------------------
+// EraSwitch draws the XP look with RetroBar (taskbar) and Open-Shell (Start
+// menu). This page finds out which are missing and offers to install them with
+// winget. The installing itself is done by the app (`--install-helpers`), the
+// same code its own first-run offer uses: after winget it stops anything the
+// helpers' installers started and turns off Open-Shell's autostart, so neither
+// takes over the Windows 11 taskbar or Start menu until you switch.
+// The same folders as src/tools.rs looks in; keep the two in step.
+
+var
+  HelpersPage: TInputOptionWizardPage;
+  NeedRetroBar, NeedOpenShell, HaveWinget: Boolean;
+  RetroBarIndex, OpenShellIndex: Integer;
+
+function RetroBarFound(): Boolean;
+var
+  Dir: String;
+begin
+  Result := FileExists(ExpandConstant('{commonpf64}\RetroBar\RetroBar.exe'))
+    or FileExists(ExpandConstant('{commonpf32}\RetroBar\RetroBar.exe'))
+    or FileExists(ExpandConstant('{localappdata}\Programs\RetroBar\RetroBar.exe'))
+    or FileExists(ExpandConstant('{localappdata}\Microsoft\WinGet\Links\RetroBar.exe'));
+  // a custom install folder: RetroBar's uninstall entry records it. winget
+  // installs it per-user (HKCU); a machine-wide install from its own setup
+  // lands in the 32-bit view (its installer is 32-bit)
+  if not Result then
+    if RegQueryStringValue(HKCU,
+        'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{574527FE-00A4-4F85-92AD-B4B8B4077D73}_is1',
+        'InstallLocation', Dir) then
+      Result := FileExists(AddBackslash(RemoveQuotes(Dir)) + 'RetroBar.exe');
+  if not Result then
+    if RegQueryStringValue(HKLM32,
+        'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{574527FE-00A4-4F85-92AD-B4B8B4077D73}_is1',
+        'InstallLocation', Dir) then
+      Result := FileExists(AddBackslash(RemoveQuotes(Dir)) + 'RetroBar.exe');
+end;
+
+function OpenShellFound(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{commonpf64}\Open-Shell\StartMenu.exe'))
+    or FileExists(ExpandConstant('{commonpf32}\Open-Shell\StartMenu.exe'));
+end;
+
+procedure InitializeWizard();
+var
+  Body: String;
+begin
+  NeedRetroBar := not RetroBarFound();
+  NeedOpenShell := not OpenShellFound();
+  // winget ships with App Installer; this is where its command lives
+  HaveWinget := FileExists(ExpandConstant('{localappdata}\Microsoft\WindowsApps\winget.exe'));
+  RetroBarIndex := -1;
+  OpenShellIndex := -1;
+  if not (NeedRetroBar or NeedOpenShell) then
+    exit;
+
+  if HaveWinget then
+    Body := 'EraSwitch doesn''t draw the XP look itself: it switches two free, open-source ' +
+      'programs on and off. These aren''t on this PC yet. Setup can install them with ' +
+      'winget after EraSwitch is installed (a console window shows the progress, and ' +
+      'their installers may ask for admin rights).'
+  else
+    Body := 'EraSwitch doesn''t draw the XP look itself: it switches two free, open-source ' +
+      'programs on and off. These aren''t on this PC yet, and winget isn''t available to ' +
+      'install them, so get them from their websites:' + #13#10 +
+      'RetroBar: https://github.com/dremin/RetroBar' + #13#10 +
+      'Open-Shell: https://github.com/Open-Shell/Open-Shell-Menu';
+
+  HelpersPage := CreateInputOptionPage(wpSelectTasks,
+    'Helper programs', 'EraSwitch needs RetroBar and Open-Shell to switch to the XP look.',
+    Body, False, False);
+  if NeedRetroBar then
+  begin
+    RetroBarIndex := HelpersPage.Add('Install RetroBar (the XP taskbar)');
+    HelpersPage.Values[RetroBarIndex] := HaveWinget;
+  end;
+  if NeedOpenShell then
+  begin
+    OpenShellIndex := HelpersPage.Add('Install Open-Shell (the XP Start menu)');
+    HelpersPage.Values[OpenShellIndex] := HaveWinget;
+  end;
+  if not HaveWinget then
+  begin
+    if RetroBarIndex >= 0 then
+      HelpersPage.CheckListBox.ItemEnabled[RetroBarIndex] := False;
+    if OpenShellIndex >= 0 then
+      HelpersPage.CheckListBox.ItemEnabled[OpenShellIndex] := False;
+  end;
+end;
+
+// the ticked helpers as the app's --install-helpers list ("" for none)
+function HelpersToInstall(): String;
+begin
+  Result := '';
+  if (HelpersPage = nil) or not HaveWinget then
+    exit;
+  if (RetroBarIndex >= 0) and HelpersPage.Values[RetroBarIndex] then
+    Result := 'retrobar';
+  if (OpenShellIndex >= 0) and HelpersPage.Values[OpenShellIndex] then
+  begin
+    if Result <> '' then
+      Result := Result + ',';
+    Result := Result + 'openshell';
+  end;
+end;
+
+procedure InstallHelpers();
+var
+  List: String;
+  ResultCode: Integer;
+begin
+  // silent installs (winget, scripts) never install other software
+  if WizardSilent() then
+    exit;
+  List := HelpersToInstall();
+  if List = '' then
+    exit;
+  WizardForm.StatusLabel.Caption := 'Installing the helper programs with winget...';
+  // the app shows its own summary when it's done
+  Exec(ExpandConstant('{app}\{#AppExeName}'), '--install-helpers ' + List, '',
+       SW_SHOW, ewWaitUntilTerminated, ResultCode);
+end;
+
 // Kill the running instance before install/uninstall so the exe isn't locked
 // (a tray app often survives the Restart Manager prompt).
 procedure TerminateApp();
@@ -213,6 +336,8 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
     TerminateApp();
+  if CurStep = ssPostInstall then
+    InstallHelpers();
   // OPTIONAL PATH: if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
   //   EnvAddPath(ExpandConstant('{app}'));
 end;

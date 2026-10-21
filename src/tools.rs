@@ -50,6 +50,13 @@ impl Tool {
             Tool::RetroBar => {
                 if let Some(d) = env("LOCALAPPDATA") {
                     out.push(d.join("Programs").join("RetroBar").join("RetroBar.exe"));
+                    // winget's portable install (ARM64): a link to the real exe
+                    out.push(
+                        d.join("Microsoft")
+                            .join("WinGet")
+                            .join("Links")
+                            .join("RetroBar.exe"),
+                    );
                 }
                 for var in ["ProgramFiles", "ProgramFiles(x86)"] {
                     if let Some(d) = env(var) {
@@ -74,9 +81,136 @@ fn real_env(var: &str) -> Option<PathBuf> {
 }
 
 // a configured path wins (even a wrong one, so the UI can say it's wrong);
-// otherwise the first known location that exists
+// otherwise the first known location that exists, then the folder its
+// uninstall entry names (a custom install folder)
 pub fn locate(tool: Tool, cfg: &ToolsConfig) -> Option<PathBuf> {
-    locate_with(tool, cfg, &real_env, &|p: &Path| p.is_file())
+    let configured = !tool.configured(cfg).trim().is_empty();
+    let found = locate_with(tool, cfg, &real_env, &|p: &Path| p.is_file()).or_else(|| {
+        // only when nothing is configured: a wrong path in Settings must show
+        // up as wrong, not be papered over by another copy
+        if configured {
+            None
+        } else {
+            from_uninstall_entry(tool)
+        }
+    });
+    // a link (winget's portable installs) is followed to the real exe, which
+    // is the path the running process reports
+    found.map(|p| match std::fs::read_link(&p) {
+        Ok(target) if target.is_absolute() => target,
+        _ => p,
+    })
+}
+
+// RetroBar's installer has a fixed product code; its uninstall entry records
+// where it went. (Open-Shell's MSI code changes per version, and it always
+// lands in Program Files anyway.)
+fn from_uninstall_entry(tool: Tool) -> Option<PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    if tool != Tool::RetroBar {
+        return None;
+    }
+    let id = "{574527FE-00A4-4F85-92AD-B4B8B4077D73}_is1";
+    let places = [
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ];
+    places.iter().find_map(|(root, key)| {
+        let dir: String = RegKey::predef(*root)
+            .open_subkey(format!(r"{key}\{id}"))
+            .and_then(|k| k.get_value("InstallLocation"))
+            .ok()?;
+        let exe = PathBuf::from(dir.trim_matches('"')).join("RetroBar.exe");
+        exe.is_file().then_some(exe)
+    })
+}
+
+// the helpers the era's enabled pieces need that can't be found
+pub fn missing(cfg: &crate::config::AppConfig) -> Vec<Tool> {
+    let mut out = Vec::new();
+    if cfg.era.taskbar.enabled && locate(Tool::RetroBar, &cfg.tools).is_none() {
+        out.push(Tool::RetroBar);
+    }
+    if cfg.era.start_menu.enabled && locate(Tool::OpenShell, &cfg.tools).is_none() {
+        out.push(Tool::OpenShell);
+    }
+    out
+}
+
+pub fn parse_list(s: &str) -> Vec<Tool> {
+    s.split(',')
+        .filter_map(|t| match t.trim().to_ascii_lowercase().as_str() {
+            "retrobar" => Some(Tool::RetroBar),
+            "openshell" | "open-shell" => Some(Tool::OpenShell),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn winget_available() -> bool {
+    std::process::Command::new("winget")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+// installs each tool with winget, then undoes what their installers do on
+// their own: Open-Shell's sets itself to start at login and takes over the
+// Windows 11 Start menu straight away, and a RetroBar that gets started would
+// take over the taskbar (and switch it to auto-hide). EraSwitch starts both
+// only while the era is on. returns one line per tool for a summary.
+pub fn install(tools: &[Tool], cfg: &ToolsConfig, data_dir: &Path) -> (bool, Vec<String>) {
+    let era_on = crate::switch::is_active(data_dir);
+    let appbar_before = crate::win_ops::taskbar_appbar_state();
+    let mut ok = true;
+    let mut lines = Vec::new();
+    for &tool in tools {
+        if locate(tool, cfg).is_some() {
+            lines.push(format!("{}: already installed", tool.label()));
+            continue;
+        }
+        crate::dlog!("tools: installing {} with winget", tool.label());
+        let result = winget_install(tool).and_then(|()| {
+            locate(tool, cfg).with_context(|| {
+                format!(
+                    "winget finished, but {} isn't where EraSwitch looks for it",
+                    tool.label()
+                )
+            })
+        });
+        match result {
+            Ok(exe) => {
+                if !era_on {
+                    let tidy = match tool {
+                        Tool::OpenShell => crate::openshell::tame_after_install(&exe),
+                        Tool::RetroBar => crate::retrobar::tame_after_install(&exe, appbar_before),
+                    };
+                    if let Err(e) = tidy {
+                        crate::dlog!("tools: tidying after {} failed: {e:#}", tool.label());
+                    }
+                }
+                lines.push(format!("{}: installed", tool.label()));
+            }
+            Err(e) => {
+                ok = false;
+                lines.push(format!("{}: not installed ({e:#})", tool.label()));
+            }
+        }
+    }
+    (ok, lines)
 }
 
 fn locate_with(
@@ -170,6 +304,41 @@ mod tests {
         assert_eq!(found, Some(PathBuf::from("D:/tools/RetroBar.exe")));
         let missing = locate_with(Tool::RetroBar, &cfg, &env_at("R"), &|_: &Path| false);
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn finds_winget_portable_retrobar_link() {
+        let want = PathBuf::from("R/LOCALAPPDATA/Microsoft/WinGet/Links/RetroBar.exe");
+        let w = want.clone();
+        let got = locate_with(
+            Tool::RetroBar,
+            &ToolsConfig::default(),
+            &env_at("R"),
+            &move |p: &Path| p == w,
+        );
+        assert_eq!(got, Some(want));
+    }
+
+    #[test]
+    fn helper_lists_parse() {
+        assert_eq!(
+            parse_list("retrobar,openshell"),
+            vec![Tool::RetroBar, Tool::OpenShell]
+        );
+        assert_eq!(parse_list(" Open-Shell "), vec![Tool::OpenShell]);
+        assert_eq!(parse_list("nonsense,,"), vec![]);
+    }
+
+    #[test]
+    fn only_enabled_pieces_need_their_tool() {
+        let mut cfg = crate::config::AppConfig::default();
+        cfg.tools.retrobar = r"Z:\definitely\not\here.exe".into();
+        cfg.tools.openshell = r"Z:\definitely\not\here.exe".into();
+        assert_eq!(missing(&cfg), vec![Tool::RetroBar, Tool::OpenShell]);
+        cfg.era.start_menu.enabled = false;
+        assert_eq!(missing(&cfg), vec![Tool::RetroBar]);
+        cfg.era.taskbar.enabled = false;
+        assert!(missing(&cfg).is_empty());
     }
 
     #[test]

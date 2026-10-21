@@ -53,6 +53,9 @@ impl Default for HotkeysConfig {
 pub struct ToolsConfig {
     pub retrobar: String,
     pub openshell: String,
+    // the first-run "install the helpers?" offer was shown; switching with a
+    // helper missing still offers again, since you asked for it then
+    pub offered: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

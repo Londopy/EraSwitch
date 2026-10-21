@@ -152,6 +152,24 @@ pub fn resume(saved: &Saved) -> Result<()> {
     Ok(())
 }
 
+// right after EraSwitch installed Open-Shell: its installer turns on
+// AutoStart and starts it, so it would take over the Windows 11 Start menu
+// now and at every login. put it back to "only while the era is on".
+pub fn tame_after_install(exe: &Path) -> Result<()> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (key, _) = hkcu
+        .create_subkey(SETTINGS_KEY)
+        .with_context(|| format!("Opening HKCU\\{SETTINGS_KEY}"))?;
+    key.set_value("AutoStart", &0u32)?;
+    if win_ops::is_running(exe) {
+        let _ = run(exe, Some("-exit"));
+        if !win_ops::wait_gone(exe, Duration::from_secs(5)) {
+            win_ops::kill_all(exe)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn restore(saved: &Saved) -> Result<()> {
     let exe = PathBuf::from(&saved.exe);
     if !saved.was_running && win_ops::is_running(&exe) {

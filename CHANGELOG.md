@@ -1,12 +1,20 @@
 # Changelog
 
-All notable changes to EraSwitch are listed here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section for a version is
-what appears on its GitHub release page. Validated in CI by
-[patchnotes](https://github.com/Londopy/patchnotes).
+All notable changes to EraSwitch are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section for a version is what appears on its GitHub release page. Validated in CI by [patchnotes](https://github.com/Londopy/patchnotes).
 
 ## [Unreleased]
+
+## [0.1.1] - 2026-10-21
+
+### Added
+
+- The setup.exe has a "Helper programs" page: it finds out whether RetroBar and Open-Shell are installed and offers to install the missing ones with winget.
+- EraSwitch offers the same install the first time it starts (for the MSI, portable and Scoop installs), and whenever you switch while a helper is missing, instead of only showing an error.
+- After installing a helper, EraSwitch stops anything its installer started and turns off Open-Shell's autostart, so neither takes over the Windows 11 taskbar or Start menu until you switch.
+
+### Fixed
+
+- RetroBar is also found in a custom install folder (through its uninstall entry) and on ARM64, where winget installs it as a portable app behind a link.
 
 ## [0.1.0] - 2026-10-17
 
@@ -23,5 +31,6 @@ what appears on its GitHub release page. Validated in CI by
 - Finds RetroBar and Open-Shell, and installs them with winget from Settings.
 - Run at sign-in, Windows notifications, and an in-app updater that checks SHA-256 and installs only when you click.
 
-[Unreleased]: https://github.com/Londopy/EraSwitch/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Londopy/EraSwitch/compare/v0.1.1...HEAD
 [0.1.0]: https://github.com/Londopy/EraSwitch/releases/tag/v0.1.0
+[0.1.1]: https://github.com/Londopy/EraSwitch/compare/v0.1.0...v0.1.1

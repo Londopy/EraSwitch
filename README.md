@@ -109,10 +109,15 @@ when you click **Download & Install**. Updates are verified with SHA-256 first.
 
 ## Usage
 
-1. Start EraSwitch. Open **Settings** from its tray icon.
-2. Under **Helper programs**, install anything marked *not found* (one click each, through
-   winget). Their installers may ask for admin rights once.
-3. Click the tray icon (or press **Ctrl+Alt+E**). You're in XP. Do it again to come back.
+1. Install EraSwitch. EraSwitch needs RetroBar and Open-Shell; the setup's **Helper programs**
+   page finds whichever are missing and installs them with winget. (The MSI, the portable exe
+   and Scoop skip that page, so EraSwitch offers the same install the first time it starts,
+   and again if you switch while one is missing. Settings > General has the buttons too.)
+   Their installers may ask for admin rights once.
+2. Click the tray icon (or press **Ctrl+Alt+E**). You're in XP. Do it again to come back.
+
+Installing the helpers doesn't change your desktop: EraSwitch stops anything their installers
+start and keeps Open-Shell from starting at sign-in, so they only run while you're in XP.
 
 **Wallpaper and sounds** are off until you set them up, because Bliss and the XP sounds belong
 to Microsoft and EraSwitch can't ship them:

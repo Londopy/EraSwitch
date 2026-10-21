@@ -89,6 +89,20 @@ pub fn apply(saved: &Saved, theme: &str) -> Result<()> {
     Ok(())
 }
 
+// right after EraSwitch installed RetroBar: if its installer started it, it
+// has taken over the taskbar (and set explorer's to auto-hide). stop it and
+// put the taskbar back the way it was before the install.
+pub fn tame_after_install(exe: &Path, appbar_before: u32) -> Result<()> {
+    // give a launch from the installer a moment to actually start
+    std::thread::sleep(Duration::from_secs(2));
+    if win_ops::is_running(exe) {
+        stop(exe)?;
+        win_ops::set_taskbar_appbar_state(appbar_before);
+        win_ops::show_explorer_taskbar();
+    }
+    Ok(())
+}
+
 // after a reboot in XP mode: start it again if it isn't running
 pub fn resume(saved: &Saved) -> Result<()> {
     let exe = PathBuf::from(&saved.exe);

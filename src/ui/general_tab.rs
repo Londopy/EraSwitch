@@ -232,12 +232,11 @@ impl SettingsApp {
     fn start_install(&mut self, tool: Tool) {
         let (tx, rx) = std::sync::mpsc::channel();
         self.install_rx = Some(rx);
+        let tools_cfg = self.config.tools.clone();
         std::thread::spawn(move || {
-            let msg = match tools::winget_install(tool) {
-                Ok(()) => format!("{} installed.", tool.label()),
-                Err(e) => format!("Installing {} failed: {e:#}", tool.label()),
-            };
-            let _ = tx.send(msg);
+            // the shared path: winget, then undo what the installer started
+            let (_, lines) = tools::install(&[tool], &tools_cfg, &crate::config::data_dir());
+            let _ = tx.send(lines.join("; "));
         });
     }
 

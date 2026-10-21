@@ -73,6 +73,30 @@ fn main() {
         return;
     }
 
+    // the installer's "helper programs" page: `--install-helpers retrobar,openshell`
+    if let Some(i) = args.iter().position(|a| a == "--install-helpers") {
+        let wanted = args
+            .get(i + 1)
+            .map(|s| tools::parse_list(s))
+            .unwrap_or_default();
+        let cfg = config::load_config().unwrap_or_default();
+        let (ok, lines) = tools::install(&wanted, &cfg.tools, &config::data_dir());
+        // the installer offered them, so don't offer again at first launch
+        let mut cfg = cfg;
+        cfg.tools.offered = true;
+        let _ = config::save_config(&cfg);
+        rfd::MessageDialog::new()
+            .set_title("EraSwitch setup")
+            .set_description(install_summary(ok, &lines))
+            .set_level(if ok {
+                rfd::MessageLevel::Info
+            } else {
+                rfd::MessageLevel::Warning
+            })
+            .show();
+        std::process::exit(if ok { 0 } else { 1 });
+    }
+
     // .londo first, before the single-instance check
     let mut open_now: Option<PathBuf> = None;
     match londo::parse_args(&args) {
@@ -143,6 +167,81 @@ fn not_installed_dialog(app: &str, homepage: &str) {
     }
 }
 
+fn install_summary(ok: bool, lines: &[String]) -> String {
+    let head = if ok {
+        "The helper programs are ready. Click the EraSwitch tray icon (or press Ctrl+Alt+E) to switch."
+    } else {
+        "Not everything could be installed. You can retry from EraSwitch's Settings."
+    };
+    format!("{head}\n\n{}", lines.join("\n"))
+}
+
+// "EraSwitch needs RetroBar and Open-Shell: install them now?", on its own
+// thread so the tray keeps working. one offer at a time.
+fn offer_helpers(
+    missing: Vec<tools::Tool>,
+    tools_cfg: config::ToolsConfig,
+    data_dir: PathBuf,
+    first_run: bool,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static OFFERING: AtomicBool = AtomicBool::new(false);
+    if OFFERING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let names = missing
+            .iter()
+            .map(|t| t.label())
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let why = if first_run {
+            format!("Welcome to EraSwitch! It draws the XP look with {names}, which aren't installed yet.")
+        } else {
+            format!("Switching needs {names}, which aren't installed yet.")
+        };
+
+        if !tools::winget_available() {
+            // no winget to install with: point at the download pages
+            let open = rfd::MessageDialog::new()
+                .set_title("EraSwitch")
+                .set_description(format!("{why}\n\nwinget isn't available on this PC, so install them from their download pages, then click the tray icon again."))
+                .set_buttons(rfd::MessageButtons::OkCancelCustom("Open download pages".into(), "Later".into()))
+                .show();
+            if open == rfd::MessageDialogResult::Custom("Open download pages".into()) {
+                for t in &missing {
+                    let _ = std::process::Command::new("explorer")
+                        .arg(t.homepage())
+                        .spawn();
+                }
+            }
+            OFFERING.store(false, Ordering::SeqCst);
+            return;
+        }
+
+        let yes = rfd::MessageDialog::new()
+            .set_title("EraSwitch")
+            .set_description(format!(
+                "{why}\n\nInstall them now with winget? A console window shows the progress, and their installers may ask for admin rights."
+            ))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if yes {
+            let (ok, lines) = tools::install(&missing, &tools_cfg, &data_dir);
+            notifications::always(
+                if ok {
+                    "EraSwitch is ready"
+                } else {
+                    "EraSwitch setup"
+                },
+                &install_summary(ok, &lines),
+            );
+        }
+        OFFERING.store(false, Ordering::SeqCst);
+    });
+}
+
 fn tray_state<'a>(state: &'a AppState, cfg: &'a AppConfig) -> tray::TrayState<'a> {
     tray::TrayState {
         active: state.active,
@@ -210,6 +309,22 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
 
     if let Some(p) = open_now {
         let _ = cmd_tx.send(Cmd::OpenLondo(p));
+    }
+
+    // first launch (the MSI, the portable exe and Scoop never showed the
+    // installer's page): offer to install whatever the era needs, once
+    {
+        let mut cfg = config_shared.lock().unwrap();
+        if !cfg.tools.offered {
+            cfg.tools.offered = true;
+            if let Err(e) = config::save_config(&cfg) {
+                dlog!("saving the helpers offer flag failed: {e:#}");
+            }
+            let missing = tools::missing(&cfg);
+            if !missing.is_empty() {
+                offer_helpers(missing, cfg.tools.clone(), data_dir.clone(), true);
+            }
+        }
     }
 
     let (update_tx, update_rx) = mpsc::channel::<updater::UpdateEvent>();
@@ -330,10 +445,20 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
                     if st.busy {
                         continue;
                     }
-                    st.busy = true;
                     let turn_on = !st.active;
-                    drop(st);
                     let cfg = config_shared.lock().unwrap().clone();
+                    // switching on with a helper missing: offer to install it
+                    // instead of failing with an error
+                    if turn_on {
+                        let missing = tools::missing(&cfg);
+                        if !missing.is_empty() {
+                            drop(st);
+                            offer_helpers(missing, cfg.tools.clone(), data_dir.clone(), false);
+                            continue;
+                        }
+                    }
+                    st.busy = true;
+                    drop(st);
                     let dir = data_dir.clone();
                     let tx = cmd_tx.clone();
                     // off the main thread: a switch takes a few seconds and the
