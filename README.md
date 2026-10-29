@@ -60,7 +60,7 @@ name are blurred in these shots.)
 - **The pieces are yours to pick.** Taskbar (any of RetroBar's XP themes: Blue, Olive Green,
   Silver, Royale...), Start menu (Open-Shell's XP Luna skin), wallpaper and sound scheme, each
   on or off.
-- **Eras are files.** Save your setup as a `.londo` file (wallpaper included) and share it.
+- **Eras are files.** Save your setup as a `.londopy` file (wallpaper included) and share it.
 - **No admin rights.** Everything EraSwitch changes is per-user. (Installing RetroBar or
   Open-Shell the first time may ask for admin rights; that's their installers.)
 
@@ -128,11 +128,14 @@ to Microsoft and EraSwitch can't ship them:
 
 Stuck in XP for any reason? Run `EraSwitch.exe --restore`.
 
-## .londo files
+## .londopy files
 
-EraSwitch saves era profiles as `.londo` files, the format all Londopy apps share.
+EraSwitch saves era profiles as `.londopy` files, the format all Londopy apps share.
 Double-click one to open it; if it belongs to another Londopy app, it opens there instead.
-A `.londo` file is a zip with a `londo.toml` inside, so you can look at it with any zip tool.
+A `.londopy` file is a zip with a `londopy.toml` inside, so you can look at it with any zip tool.
+
+Eras saved by EraSwitch 0.1.x are `.londo` files (the format's old name). They still open:
+pick one in **Settings > Open era...**, or drop it on `EraSwitch.exe`.
 
 ## Configuration
 
@@ -221,7 +224,7 @@ only loads with a patcher such as SecureUxTheme. It's planned as an optional pie
 src/
   main.rs        entry point, main loop, --restore
   switch.rs      turns the era on and off; the snapshot
-  era.rs         what an era is; .londo era files
+  era.rs         what an era is; .londopy era files
   retrobar.rs    taskbar piece
   openshell.rs   Start menu piece
   sounds.rs      sound scheme piece
@@ -233,7 +236,7 @@ src/
   startup.rs     run at sign-in, toast identity
   notifications.rs  toasts
   updater.rs     GitHub Releases updater
-  londo.rs       .londo files: read, write, open from Explorer
+  londopy.rs     .londopy files: read, write, open from Explorer
   ui/            settings window tabs
 installer/       Inno Setup (.iss) and WiX (.wxs) scripts, install.ps1/.cmd
 scripts/         release_notes.py (release page, checksums, torrents)

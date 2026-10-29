@@ -24,7 +24,7 @@ previous settings so it can put them back.
 
 **In scope:**
 
-- Anything that lets a crafted `.londo` era file write outside EraSwitch's own
+- Anything that lets a crafted `.londopy` (or older `.londo`) era file write outside EraSwitch's own
   data folder, run a program, or read files it shouldn't
 - The updater installing something that doesn't match the release's
   `SHA256SUMS.txt`

@@ -11,7 +11,7 @@ mod era;
 mod hotkeys;
 #[macro_use]
 mod log_util;
-mod londo;
+mod londopy;
 mod notifications;
 mod openshell;
 mod retrobar;
@@ -37,7 +37,7 @@ pub enum Cmd {
     SwitchDone(Result<bool, String>),
     OpenSettings,
     ConfigUpdated(Box<AppConfig>),
-    OpenLondo(PathBuf),
+    OpenLondopy(PathBuf),
     UpdateAvailable(String),
     UpToDate,
     UpdateFailed(String),
@@ -97,17 +97,17 @@ fn main() {
         std::process::exit(if ok { 0 } else { 1 });
     }
 
-    // .londo first, before the single-instance check
+    // .londopy first, before the single-instance check
     let mut open_now: Option<PathBuf> = None;
-    match londo::parse_args(&args) {
-        Some(londo::LondoArg::Unregister) => {
-            let _ = londo::unregister_self();
+    match londopy::parse_args(&args) {
+        Some(londopy::LondopyArg::Unregister) => {
+            let _ = londopy::unregister_self();
             return;
         }
-        Some(londo::LondoArg::Open(path)) => match londo::dispatch(&path) {
-            Ok(londo::Dispatch::Mine(_)) => open_now = Some(path),
-            Ok(londo::Dispatch::Forwarded { .. }) => return,
-            Ok(londo::Dispatch::NotInstalled { app, homepage }) => {
+        Some(londopy::LondopyArg::Open(path)) => match londopy::dispatch(&path) {
+            Ok(londopy::Dispatch::Mine(_)) => open_now = Some(path),
+            Ok(londopy::Dispatch::Forwarded { .. }) => return,
+            Ok(londopy::Dispatch::NotInstalled { app, homepage }) => {
                 not_installed_dialog(&app, &homepage);
                 return;
             }
@@ -127,7 +127,7 @@ fn main() {
     let Some(_instance) = win_ops::acquire_single_instance(restarted) else {
         // already running: hand it the file, if there is one, and quit
         if let Some(p) = &open_now {
-            let _ = londo::send_to_inbox(&config::data_dir(), p);
+            let _ = londopy::send_to_inbox(&config::data_dir(), p);
         }
         return;
     };
@@ -258,8 +258,8 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
 
     let mut config = config::load_config()?;
     if !config::is_portable() {
-        if let Err(e) = londo::register_self() {
-            dlog!("londo register failed: {e:#}");
+        if let Err(e) = londopy::register_self() {
+            dlog!("londopy register failed: {e:#}");
         }
     }
     // the installers can write the Run value (Inno's startup task, MSI
@@ -308,7 +308,7 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
     };
 
     if let Some(p) = open_now {
-        let _ = cmd_tx.send(Cmd::OpenLondo(p));
+        let _ = cmd_tx.send(Cmd::OpenLondopy(p));
     }
 
     // first launch (the MSI, the portable exe and Scoop never showed the
@@ -398,11 +398,11 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
             }
         }
 
-        // .londo files handed over by a second copy started from Explorer
+        // .londopy files handed over by a second copy started from Explorer
         if last_inbox.elapsed() >= Duration::from_millis(500) {
             last_inbox = Instant::now();
-            for p in londo::drain_inbox(&data_dir) {
-                let _ = cmd_tx.send(Cmd::OpenLondo(p));
+            for p in londopy::drain_inbox(&data_dir) {
+                let _ = cmd_tx.send(Cmd::OpenLondopy(p));
             }
         }
 
@@ -519,7 +519,7 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
                     tray::update(&tray_handle, &tray_state(&st, &new_cfg));
                 }
 
-                Cmd::OpenLondo(path) => match era::open_londo(&path, &data_dir) {
+                Cmd::OpenLondopy(path) => match era::open_londopy(&path, &data_dir) {
                     Ok(loaded) => {
                         let mut cfg = config_shared.lock().unwrap();
                         cfg.era = loaded;

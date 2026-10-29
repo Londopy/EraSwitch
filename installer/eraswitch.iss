@@ -137,13 +137,13 @@ Filename: "{app}\{#AppExeName}"; \
   Parameters: "--restore"; \
   Flags: runhidden waituntilterminated; \
   RunOnceId: "RestoreWindows"
-; .londo files: let the app drop its registration and hand the .londo
-; double-click to another installed Londopy app (see londo-files.md).
-; Runs before the files are removed. Delete if the app has no .londo files.
+; .londopy files: let the app drop its registration and hand the .londopy
+; double-click to another installed Londopy app (see londopy-files.md).
+; Runs before the files are removed. Delete if the app has no .londopy files.
 Filename: "{app}\{#AppExeName}"; \
-  Parameters: "--londo-unregister"; \
+  Parameters: "--londopy-unregister"; \
   Flags: runhidden waituntilterminated; \
-  RunOnceId: "LondoUnregister"
+  RunOnceId: "LondopyUnregister"
 
 [UninstallDelete]
 ; Clean up config and logs left in AppData

@@ -150,7 +150,7 @@
       </Component>
     </StandardDirectory>
 
-    <!-- uninstall removes %APPDATA%\EraSwitch (config, logs, .londo inbox),
+    <!-- uninstall removes %APPDATA%\EraSwitch (config, logs, .londopy inbox),
          matching the Inno [UninstallDelete] entry -->
     <StandardDirectory Id="AppDataFolder">
       <Directory Id="CONFIGFOLDER" Name="EraSwitch">
@@ -166,11 +166,11 @@
       </Directory>
     </StandardDirectory>
 
-    <!-- .londo files: before the files are removed, let the app drop its
-         registration and hand the .londo double-click to another Londopy app
-         (see londo-files.md). Skipped during upgrades. Delete this block if the
-         app has no .londo files. -->
-    <CustomAction Id="LondoUnregister" FileRef="MainExe" ExeCommand="--londo-unregister"
+    <!-- .londopy files: before the files are removed, let the app drop its
+         registration and hand the .londopy double-click to another Londopy app
+         (see londopy-files.md). Skipped during upgrades. Delete this block if the
+         app has no .londopy files. -->
+    <CustomAction Id="LondopyUnregister" FileRef="MainExe" ExeCommand="--londopy-unregister"
                   Execute="immediate" Return="ignore" />
     <!-- put Windows 11 back if the era was on, while the exe and the snapshot
          in AppData still exist. Waits for it to finish. Skipped during upgrades,
@@ -178,9 +178,9 @@
     <CustomAction Id="RestoreWindows" FileRef="MainExe" ExeCommand="--restore"
                   Execute="immediate" Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="RestoreWindows" Before="LondoUnregister"
+      <Custom Action="RestoreWindows" Before="LondopyUnregister"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <Custom Action="LondoUnregister" Before="InstallInitialize"
+      <Custom Action="LondopyUnregister" Before="InstallInitialize"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
   </Package>

@@ -1,11 +1,11 @@
-// londo.rs
-// .londo files: the file format every Londopy app shares, like osu!'s .osz.
-// a .londo is a zip with a londo.toml manifest that says which app it belongs
-// to. any installed Londopy app can be the one Windows opens .londo files
+// londopy.rs
+// .londopy files: the file format every Londopy app shares, like osu!'s .osz.
+// a .londopy is a zip with a londopy.toml manifest that says which app it belongs
+// to. any installed Londopy app can be the one Windows opens .londopy files
 // with; it reads the manifest and hands the file to the right app, so the
 // double-click always lands in the right place.
 //
-// format and registry layout: londo-files.md in the londopy-style skill.
+// format and registry layout: londopy-files.md in the londopy-style skill.
 // Replace eraswitch (lowercase repo slug, e.g. "clipvault"), EraSwitch and EraSwitch.
 //
 // Cargo.toml:
@@ -26,14 +26,14 @@ pub const APP_ID: &str = "eraswitch";
 pub const APP_NAME: &str = "EraSwitch";
 pub const HOMEPAGE: &str = "https://github.com/Londopy/EraSwitch";
 
-pub const EXTENSION: &str = "londo";
-pub const MANIFEST_NAME: &str = "londo.toml";
+pub const EXTENSION: &str = "londopy";
+pub const MANIFEST_NAME: &str = "londopy.toml";
 // newest container version this code understands
 pub const FORMAT_VERSION: u32 = 1;
-// a manifest is a few hundred bytes; anything huge is not a real .londo
+// a manifest is a few hundred bytes; anything huge is not a real .londopy
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 
-// londo.toml
+// londopy.toml
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     // container version (FORMAT_VERSION when written)
@@ -71,20 +71,20 @@ impl Manifest {
 
     fn validate(&self) -> Result<()> {
         if self.format == 0 {
-            bail!("londo.toml has no valid format number");
+            bail!("londopy.toml has no valid format number");
         }
         if self.format > FORMAT_VERSION {
             bail!(
-                "this .londo file uses format {} but this app understands up to {}; update the app",
+                "this .londopy file uses format {} but this app understands up to {}; update the app",
                 self.format,
                 FORMAT_VERSION
             );
         }
         if !valid_app_id(&self.app) {
-            bail!("londo.toml has an invalid app id '{}'", self.app);
+            bail!("londopy.toml has an invalid app id '{}'", self.app);
         }
         if self.kind.trim().is_empty() {
-            bail!("londo.toml has no kind");
+            bail!("londopy.toml has no kind");
         }
         Ok(())
     }
@@ -100,10 +100,11 @@ pub fn valid_app_id(id: &str) -> bool {
 }
 
 // entry names stay relative and inside the archive: no "..", no drive letters,
-// no leading slash, and londo.toml is reserved
+// no leading slash, and londopy.toml is reserved
 fn safe_entry_name(name: &str) -> bool {
     !name.is_empty()
         && name != MANIFEST_NAME
+        && name != LEGACY_MANIFEST_NAME
         && !name.starts_with('/')
         && !name.starts_with('\\')
         && !name.contains(':')
@@ -112,23 +113,23 @@ fn safe_entry_name(name: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
-pub fn is_londo_path(path: &Path) -> bool {
+pub fn is_londopy_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case(EXTENSION))
 }
 
-// writes a .londo: manifest first and uncompressed (cheap to sniff), then
+// writes a .londopy: manifest first and uncompressed (cheap to sniff), then
 // the payload entries, compressed. goes to a temp file first so a crash
 // never leaves half a file behind.
 pub fn write(path: &Path, manifest: &Manifest, entries: &[(&str, &[u8])]) -> Result<()> {
     manifest.validate()?;
     for (name, _) in entries {
         if !safe_entry_name(name) {
-            bail!("bad entry name '{name}' for a .londo file");
+            bail!("bad entry name '{name}' for a .londopy file");
         }
     }
-    let tmp = path.with_extension("londo.tmp");
+    let tmp = path.with_extension("londopy.tmp");
     {
         let file =
             std::fs::File::create(&tmp).with_context(|| format!("Creating {}", tmp.display()))?;
@@ -149,33 +150,35 @@ pub fn write(path: &Path, manifest: &Manifest, entries: &[(&str, &[u8])]) -> Res
     Ok(())
 }
 
-// an opened .londo; read entries on demand with a size cap
-pub struct LondoFile {
+// an opened .londopy; read entries on demand with a size cap
+pub struct LondopyFile {
     pub manifest: Manifest,
     archive: zip::ZipArchive<std::fs::File>,
 }
 
-impl LondoFile {
+impl LondopyFile {
     pub fn open(path: &Path) -> Result<Self> {
         let file =
             std::fs::File::open(path).with_context(|| format!("Opening {}", path.display()))?;
         let mut archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("{} is not a .londo file (not a zip)", path.display()))?;
+            .with_context(|| format!("{} is not a .londopy file (not a zip)", path.display()))?;
         let raw = read_capped(&mut archive, MANIFEST_NAME, MAX_MANIFEST_BYTES)
-            .with_context(|| format!("{} has no readable londo.toml", path.display()))?;
-        let text = String::from_utf8(raw).context("londo.toml is not UTF-8")?;
-        let manifest: Manifest = toml::from_str(&text).context("Parsing londo.toml")?;
+            // legacy: a .londo from before the rename carries londo.toml
+            .or_else(|_| read_capped(&mut archive, LEGACY_MANIFEST_NAME, MAX_MANIFEST_BYTES))
+            .with_context(|| format!("{} has no readable londopy.toml", path.display()))?;
+        let text = String::from_utf8(raw).context("londopy.toml is not UTF-8")?;
+        let manifest: Manifest = toml::from_str(&text).context("Parsing londopy.toml")?;
         manifest.validate()?;
         Ok(Self { manifest, archive })
     }
 
-    // payload entry names (londo.toml and folders left out)
+    // payload entry names (londopy.toml and folders left out)
     pub fn entry_names(&self) -> Vec<String> {
         self.archive
             .file_names()
             // zip 9 hands back a Result per name; a name it can't decode is skipped
             .filter_map(|n| n.ok().map(|n| n.into_owned()))
-            .filter(|n| n != MANIFEST_NAME && !n.ends_with('/'))
+            .filter(|n| n != MANIFEST_NAME && n != LEGACY_MANIFEST_NAME && !n.ends_with('/'))
             .collect()
     }
 
@@ -211,23 +214,29 @@ fn read_capped<R: Read + std::io::Seek>(
     Ok(out)
 }
 
-// ---- opening .londo files from Explorer -------------------------------------
+// ---- opening .londopy files from Explorer -------------------------------------
 
 // what main() should do with the command line
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LondoArg {
-    // `--londo-open <file>` from Explorer, or a .londo dropped on the exe
+pub enum LondopyArg {
+    // `--londopy-open <file>` from Explorer, or a .londopy dropped on the exe
     Open(PathBuf),
-    // `--londo-unregister`, run by the uninstaller
+    // `--londopy-unregister`, run by the uninstaller
     Unregister,
 }
 
 // call first thing in main(), before the single-instance check
-pub fn parse_args(args: &[String]) -> Option<LondoArg> {
+pub fn parse_args(args: &[String]) -> Option<LondopyArg> {
     match args.get(1).map(String::as_str) {
-        Some("--londo-unregister") => Some(LondoArg::Unregister),
-        Some("--londo-open") => args.get(2).map(|p| LondoArg::Open(PathBuf::from(p))),
-        Some(p) if is_londo_path(Path::new(p)) => Some(LondoArg::Open(PathBuf::from(p))),
+        // legacy spellings: an installed 0.1.x uninstaller and older .londo
+        // associations still call these
+        Some("--londopy-unregister" | "--londo-unregister") => Some(LondopyArg::Unregister),
+        Some("--londopy-open" | "--londo-open") => {
+            args.get(2).map(|p| LondopyArg::Open(PathBuf::from(p)))
+        }
+        Some(p) if is_londopy_path(Path::new(p)) || is_legacy_path(Path::new(p)) => {
+            Some(LondopyArg::Open(PathBuf::from(p)))
+        }
         _ => None,
     }
 }
@@ -244,14 +253,14 @@ pub enum Dispatch {
 
 // reads the manifest and routes the file
 pub fn dispatch(path: &Path) -> Result<Dispatch> {
-    let manifest = LondoFile::open(path)?.manifest;
+    let manifest = LondopyFile::open(path)?.manifest;
     if manifest.app == APP_ID {
         return Ok(Dispatch::Mine(manifest));
     }
     if let Some(exe) = registry::app_exe(&manifest.app).filter(|e| e.is_file()) {
         let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         std::process::Command::new(&exe)
-            .arg("--londo-open")
+            .arg("--londopy-open")
             .arg(abs)
             .spawn()
             .with_context(|| format!("Starting {}", exe.display()))?;
@@ -310,7 +319,7 @@ pub fn drain_inbox(data_dir: &Path) -> Vec<PathBuf> {
 
 // ---- file association (HKCU, no admin) --------------------------------------
 
-// "C:\Apps\Foo.exe" --londo-open "%1"  ->  C:\Apps\Foo.exe
+// "C:\Apps\Foo.exe" --londopy-open "%1"  ->  C:\Apps\Foo.exe
 fn parse_command_exe(command: &str) -> Option<PathBuf> {
     let c = command.trim();
     if let Some(rest) = c.strip_prefix('"') {
@@ -332,7 +341,7 @@ fn pick_new_owner(candidates: &[(String, PathBuf)], leaving: &str) -> Option<Pat
 }
 
 // call at startup in installed (non-portable) mode: records where this app
-// lives and claims .londo if no live app owns it. never takes .londo from
+// lives and claims .londopy if no live app owns it. never takes .londopy from
 // another app that still exists; that app forwards our files anyway.
 pub fn register_self() -> Result<()> {
     let exe = std::env::current_exe()?;
@@ -346,7 +355,7 @@ pub fn register_self() -> Result<()> {
     Ok(())
 }
 
-// run by the uninstaller (--londo-unregister): forget this app and pass the
+// run by the uninstaller (--londopy-unregister): forget this app and pass the
 // double-click to another installed Londopy app, or remove it if none is left
 pub fn unregister_self() -> Result<()> {
     let exe = std::env::current_exe()?;
@@ -359,7 +368,80 @@ pub fn unregister_self() -> Result<()> {
             None => registry::remove_handler()?,
         }
     }
+    legacy::unregister(&exe)?;
     Ok(())
+}
+
+// ---- legacy .londo (EraSwitch-specific, not in the template) ----------------
+// before .londopy, Londopy apps shared `.londo`: a `londo.toml` manifest,
+// `--londo-open` / `--londo-unregister`, HKCU\Software\Londopy\Londo\Apps and
+// the Londopy.Londo ProgID. EraSwitch 0.1.x saved eras that way and registered
+// there, and other apps (reelsmith) may still own `.londo`, so old files keep
+// opening and only EraSwitch's own old registration is ever removed.
+
+pub const LEGACY_EXTENSION: &str = "londo";
+const LEGACY_MANIFEST_NAME: &str = "londo.toml";
+
+pub fn is_legacy_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(LEGACY_EXTENSION))
+}
+
+#[cfg(windows)]
+mod legacy {
+    use anyhow::Result;
+    use std::path::{Path, PathBuf};
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    const APPS_KEY: &str = r"Software\Londopy\Londo\Apps";
+    const COMMAND: &str = r"Software\Classes\Londopy.Londo\shell\open\command";
+
+    // forget 0.1.x's registration; if `.londo` double-clicks still go to this
+    // exe, hand them to another app registered there, or drop the association
+    pub fn unregister(exe: &Path) -> Result<()> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let _ = hkcu.delete_subkey_all(format!(r"{APPS_KEY}\{}", super::APP_ID));
+        let owner = hkcu
+            .open_subkey(COMMAND)
+            .and_then(|k| k.get_value::<String, _>(""))
+            .ok()
+            .and_then(|c| super::parse_command_exe(&c));
+        if !owner.is_some_and(|o| super::same_path(&o, exe)) {
+            return Ok(());
+        }
+        let others: Vec<(String, PathBuf)> = hkcu
+            .open_subkey(APPS_KEY)
+            .map(|apps| {
+                apps.enum_keys()
+                    .flatten()
+                    .filter_map(|id| {
+                        let e: String = apps.open_subkey(&id).ok()?.get_value("Exe").ok()?;
+                        Some((id, PathBuf::from(e)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        match super::pick_new_owner(&others, super::APP_ID) {
+            Some(next) => {
+                let (k, _) = hkcu.create_subkey(COMMAND)?;
+                k.set_value("", &format!("\"{}\" --londo-open \"%1\"", next.display()))?;
+            }
+            None => {
+                let _ = hkcu.delete_subkey_all(r"Software\Classes\Londopy.Londo");
+                let _ = hkcu.delete_subkey_all(r"Software\Classes\.londo");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+mod legacy {
+    pub fn unregister(_: &std::path::Path) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -374,9 +456,9 @@ mod registry {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
     use winreg::RegKey;
 
-    const APPS_KEY: &str = r"Software\Londopy\Londo\Apps";
+    const APPS_KEY: &str = r"Software\Londopy\Londopy\Apps";
     const CLASSES: &str = r"Software\Classes";
-    const PROG_ID: &str = "Londopy.Londo";
+    const PROG_ID: &str = "Londopy.Londopy";
 
     fn hkcu() -> RegKey {
         RegKey::predef(HKEY_CURRENT_USER)
@@ -423,30 +505,30 @@ mod registry {
             .ok()
     }
 
-    // .londo -> Londopy.Londo -> "<exe>" --londo-open "%1"
+    // .londopy -> Londopy.Londopy -> "<exe>" --londopy-open "%1"
     pub fn set_handler(exe: &Path) -> Result<()> {
         let exe = exe.to_string_lossy();
-        let (ext, _) = hkcu().create_subkey(format!(r"{CLASSES}\.londo"))?;
+        let (ext, _) = hkcu().create_subkey(format!(r"{CLASSES}\.londopy"))?;
         ext.set_value("", &PROG_ID.to_string())?;
-        ext.set_value("Content Type", &"application/x-londo".to_string())?;
+        ext.set_value("Content Type", &"application/x-londopy".to_string())?;
         let (owp, _) = ext.create_subkey("OpenWithProgids")?;
         owp.set_value(PROG_ID, &String::new())?;
         let (prog, _) = hkcu().create_subkey(format!(r"{CLASSES}\{PROG_ID}"))?;
-        prog.set_value("", &"Londo file".to_string())?;
+        prog.set_value("", &"Londopy file".to_string())?;
         let (icon, _) = prog.create_subkey("DefaultIcon")?;
         icon.set_value("", &format!("\"{exe}\",0"))?;
         let (cmd, _) = prog.create_subkey(r"shell\open\command")?;
-        cmd.set_value("", &format!("\"{exe}\" --londo-open \"%1\""))?;
+        cmd.set_value("", &format!("\"{exe}\" --londopy-open \"%1\""))?;
         notify_shell();
         Ok(())
     }
 
     pub fn remove_handler() -> Result<()> {
         let _ = hkcu().delete_subkey_all(format!(r"{CLASSES}\{PROG_ID}"));
-        // only drop .londo itself if it still points at our ProgID
-        if let Ok(ext) = hkcu().open_subkey_with_flags(format!(r"{CLASSES}\.londo"), KEY_READ) {
+        // only drop .londopy itself if it still points at our ProgID
+        if let Ok(ext) = hkcu().open_subkey_with_flags(format!(r"{CLASSES}\.londopy"), KEY_READ) {
             if ext.get_value::<String, _>("").ok().as_deref() == Some(PROG_ID) {
-                let _ = hkcu().delete_subkey_all(format!(r"{CLASSES}\.londo"));
+                let _ = hkcu().delete_subkey_all(format!(r"{CLASSES}\.londopy"));
             }
         }
         notify_shell();
@@ -495,7 +577,7 @@ mod tests {
     use super::*;
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("londo-test-{tag}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("londopy-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -508,26 +590,26 @@ mod tests {
     #[test]
     fn write_then_read_roundtrip() {
         let d = tmpdir("rt");
-        let p = d.join("work.londo");
+        let p = d.join("work.londopy");
         write(
             &p,
             &sample(),
             &[("profile.toml", b"x = 1\n"), ("img/icon.png", &[1, 2, 3])],
         )
         .unwrap();
-        let mut f = LondoFile::open(&p).unwrap();
+        let mut f = LondopyFile::open(&p).unwrap();
         assert_eq!(f.manifest, sample());
         let mut names = f.entry_names();
         names.sort();
         assert_eq!(names, vec!["img/icon.png", "profile.toml"]);
         assert_eq!(f.read_entry("profile.toml", 1024).unwrap(), b"x = 1\n");
-        assert!(!d.join("work.londo.tmp").exists());
+        assert!(!d.join("work.londopy.tmp").exists());
     }
 
     #[test]
     fn manifest_is_first_and_uncompressed() {
         let d = tmpdir("first");
-        let p = d.join("a.londo");
+        let p = d.join("a.londopy");
         write(&p, &sample(), &[("data.bin", &[0u8; 4096])]).unwrap();
         let mut z = zip::ZipArchive::new(std::fs::File::open(&p).unwrap()).unwrap();
         let first = z.by_index(0).unwrap();
@@ -542,7 +624,7 @@ mod tests {
             "/abs",
             "C:\\x",
             "a/../b",
-            "londo.toml",
+            "londopy.toml",
             "",
             "a//b",
         ] {
@@ -552,15 +634,15 @@ mod tests {
             assert!(safe_entry_name(good), "{good} should be allowed");
         }
         let d = tmpdir("unsafe");
-        assert!(write(&d.join("x.londo"), &sample(), &[("../x", b"")]).is_err());
+        assert!(write(&d.join("x.londopy"), &sample(), &[("../x", b"")]).is_err());
     }
 
     #[test]
     fn enforces_entry_size_cap() {
         let d = tmpdir("cap");
-        let p = d.join("big.londo");
+        let p = d.join("big.londopy");
         write(&p, &sample(), &[("big.bin", &vec![0u8; 100_000])]).unwrap();
-        let mut f = LondoFile::open(&p).unwrap();
+        let mut f = LondopyFile::open(&p).unwrap();
         assert!(f.read_entry("big.bin", 1000).is_err());
         assert_eq!(f.read_entry("big.bin", 100_000).unwrap().len(), 100_000);
     }
@@ -584,26 +666,26 @@ mod tests {
     #[test]
     fn not_a_zip_is_a_clear_error() {
         let d = tmpdir("nozip");
-        let p = d.join("x.londo");
+        let p = d.join("x.londopy");
         std::fs::write(&p, b"hello").unwrap();
-        let err = LondoFile::open(&p).err().unwrap().to_string();
-        assert!(err.contains("not a .londo file"), "{err}");
+        let err = LondopyFile::open(&p).err().unwrap().to_string();
+        assert!(err.contains("not a .londopy file"), "{err}");
     }
 
     #[test]
     fn args_parsing() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            parse_args(&a(&["app.exe", "--londo-open", "C:\\x\\a.londo"])),
-            Some(LondoArg::Open(PathBuf::from("C:\\x\\a.londo")))
+            parse_args(&a(&["app.exe", "--londopy-open", "C:\\x\\a.londopy"])),
+            Some(LondopyArg::Open(PathBuf::from("C:\\x\\a.londopy")))
         );
         assert_eq!(
-            parse_args(&a(&["app.exe", "D:\\b.LONDO"])),
-            Some(LondoArg::Open(PathBuf::from("D:\\b.LONDO")))
+            parse_args(&a(&["app.exe", "D:\\b.LONDOPY"])),
+            Some(LondopyArg::Open(PathBuf::from("D:\\b.LONDOPY")))
         );
         assert_eq!(
-            parse_args(&a(&["app.exe", "--londo-unregister"])),
-            Some(LondoArg::Unregister)
+            parse_args(&a(&["app.exe", "--londopy-unregister"])),
+            Some(LondopyArg::Unregister)
         );
         assert_eq!(parse_args(&a(&["app.exe", "--restarted"])), None);
         assert_eq!(parse_args(&a(&["app.exe"])), None);
@@ -612,14 +694,14 @@ mod tests {
     #[test]
     fn dispatch_own_and_missing_apps() {
         let d = tmpdir("dispatch");
-        let mine = d.join("mine.londo");
+        let mine = d.join("mine.londopy");
         write(&mine, &sample(), &[]).unwrap();
         assert!(matches!(dispatch(&mine).unwrap(), Dispatch::Mine(_)));
 
         let mut other = sample();
         other.app = "someotherapp".into();
         other.homepage = "https://github.com/Londopy/someotherapp".into();
-        let theirs = d.join("theirs.londo");
+        let theirs = d.join("theirs.londopy");
         write(&theirs, &other, &[]).unwrap();
         assert_eq!(
             dispatch(&theirs).unwrap(),
@@ -633,26 +715,26 @@ mod tests {
     #[test]
     fn inbox_roundtrip_in_order() {
         let d = tmpdir("inbox");
-        let f1 = d.join("one.londo");
-        let f2 = d.join("two.londo");
+        let f1 = d.join("one.londopy");
+        let f2 = d.join("two.londopy");
         std::fs::write(&f1, b"").unwrap();
         std::fs::write(&f2, b"").unwrap();
         send_to_inbox(&d, &f1).unwrap();
         send_to_inbox(&d, &f2).unwrap();
         let got = drain_inbox(&d);
         assert_eq!(got.len(), 2);
-        assert!(got[0].ends_with("one.londo") && got[1].ends_with("two.londo"));
+        assert!(got[0].ends_with("one.londopy") && got[1].ends_with("two.londopy"));
         assert!(drain_inbox(&d).is_empty());
     }
 
     #[test]
     fn command_exe_parsing() {
         assert_eq!(
-            parse_command_exe(r#""C:\Program Files\A B\App.exe" --londo-open "%1""#),
+            parse_command_exe(r#""C:\Program Files\A B\App.exe" --londopy-open "%1""#),
             Some(PathBuf::from(r"C:\Program Files\A B\App.exe"))
         );
         assert_eq!(
-            parse_command_exe(r#"C:\Apps\App.exe --londo-open "%1""#),
+            parse_command_exe(r#"C:\Apps\App.exe --londopy-open "%1""#),
             Some(PathBuf::from(r"C:\Apps\App.exe"))
         );
         assert_eq!(parse_command_exe("   "), None);

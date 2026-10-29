@@ -1,13 +1,13 @@
 // era.rs
 // what an "era" looks like (which RetroBar theme, which Open-Shell skin, which
-// wallpaper and sound scheme), and saving/opening one as a .londo file
+// wallpaper and sound scheme), and saving/opening one as a .londopy file
 // (kind = "era", payload era.toml plus the wallpaper image if there is one).
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::londo;
+use crate::londopy;
 
 pub const LONDO_KIND: &str = "era";
 const ERA_ENTRY: &str = "era.toml";
@@ -147,7 +147,7 @@ impl Era {
     }
 }
 
-// file name for a wallpaper inside the .londo, if its extension is allowed
+// file name for a wallpaper inside the .londopy, if its extension is allowed
 fn wallpaper_entry_name(path: &Path) -> Option<String> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     WALLPAPER_EXTS
@@ -175,9 +175,9 @@ fn slug(name: &str) -> String {
     }
 }
 
-pub fn save_londo(era: &Era, path: &Path) -> Result<()> {
+pub fn save_londopy(era: &Era, path: &Path) -> Result<()> {
     let created = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let manifest = londo::Manifest::new(LONDO_KIND, &era.name, &created);
+    let manifest = londopy::Manifest::new(LONDO_KIND, &era.name, &created);
 
     let mut payload = era.clone();
     let mut image: Option<(String, Vec<u8>)> = None;
@@ -199,15 +199,15 @@ pub fn save_londo(era: &Era, path: &Path) -> Result<()> {
     if let Some((name, bytes)) = &image {
         entries.push((name.as_str(), bytes.as_slice()));
     }
-    londo::write(path, &manifest, &entries)
+    londopy::write(path, &manifest, &entries)
 }
 
 // opens an era file; a bundled wallpaper is extracted under <data dir>\eras\<name>\
-pub fn open_londo(path: &Path, data_dir: &Path) -> Result<Era> {
-    let mut file = londo::LondoFile::open(path)?;
-    if file.manifest.app != londo::APP_ID || file.manifest.kind != LONDO_KIND {
+pub fn open_londopy(path: &Path, data_dir: &Path) -> Result<Era> {
+    let mut file = londopy::LondopyFile::open(path)?;
+    if file.manifest.app != londopy::APP_ID || file.manifest.kind != LONDO_KIND {
         bail!(
-            "This .londo file is a '{}' for '{}', not an EraSwitch era",
+            "This .londopy file is a '{}' for '{}', not an EraSwitch era",
             file.manifest.kind,
             file.manifest.app
         );
@@ -296,11 +296,11 @@ mod tests {
     #[test]
     fn hostile_era_files_are_refused() {
         let dir = temp_dir("hostile");
-        let file = dir.join("evil.londo");
-        let m = londo::Manifest::new(LONDO_KIND, "evil", "2026-10-16T00:00:00Z");
+        let file = dir.join("evil.londopy");
+        let m = londopy::Manifest::new(LONDO_KIND, "evil", "2026-10-16T00:00:00Z");
         let toml = "[taskbar]\nenabled = true\nretrobar_theme = '\\\\attacker\\share\\x'\n";
-        londo::write(&file, &m, &[("era.toml", toml.as_bytes())]).unwrap();
-        assert!(open_londo(&file, &dir).is_err());
+        londopy::write(&file, &m, &[("era.toml", toml.as_bytes())]).unwrap();
+        assert!(open_londopy(&file, &dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -340,11 +340,11 @@ mod tests {
             ..Default::default()
         };
 
-        let file = dir.join("my.londo");
-        save_londo(&era, &file).unwrap();
+        let file = dir.join("my.londopy");
+        save_londopy(&era, &file).unwrap();
 
         let data = dir.join("data");
-        let back = open_londo(&file, &data).unwrap();
+        let back = open_londopy(&file, &data).unwrap();
         assert_eq!(back.taskbar, era.taskbar);
         assert!(back.wallpaper.enabled);
         let extracted = PathBuf::from(&back.wallpaper.path);
@@ -358,9 +358,9 @@ mod tests {
         let dir = temp_dir("nowall");
         let mut era = Era::default();
         era.wallpaper.enabled = true; // enabled but no file: nothing to carry
-        let file = dir.join("plain.londo");
-        save_londo(&era, &file).unwrap();
-        let back = open_londo(&file, &dir).unwrap();
+        let file = dir.join("plain.londopy");
+        save_londopy(&era, &file).unwrap();
+        let back = open_londopy(&file, &dir).unwrap();
         assert!(!back.wallpaper.enabled);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -368,10 +368,33 @@ mod tests {
     #[test]
     fn other_kinds_are_refused() {
         let dir = temp_dir("kind");
-        let file = dir.join("p.londo");
-        let m = londo::Manifest::new("profile", "x", "2026-10-16T00:00:00Z");
-        londo::write(&file, &m, &[("era.toml", b"name = 'x'")]).unwrap();
-        assert!(open_londo(&file, &dir).is_err());
+        let file = dir.join("p.londopy");
+        let m = londopy::Manifest::new("profile", "x", "2026-10-16T00:00:00Z");
+        londopy::write(&file, &m, &[("era.toml", b"name = 'x'")]).unwrap();
+        assert!(open_londopy(&file, &dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // an era saved by EraSwitch 0.1.x: a .londo with londo.toml as its manifest
+    #[test]
+    fn legacy_londo_eras_still_open() {
+        use std::io::Write;
+        let dir = temp_dir("legacy");
+        let file = dir.join("old.londo");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&file).unwrap());
+            let opts = zip::write::SimpleFileOptions::default();
+            z.start_file("londo.toml", opts).unwrap();
+            z.write_all(b"format = 1\napp = \"eraswitch\"\nkind = \"era\"\ntitle = \"Old XP\"\n")
+                .unwrap();
+            z.start_file("era.toml", opts).unwrap();
+            z.write_all(b"name = \"Old XP\"\n[taskbar]\nretrobar_theme = \"Windows XP Silver\"\n")
+                .unwrap();
+            z.finish().unwrap();
+        }
+        let back = open_londopy(&file, &dir).unwrap();
+        assert_eq!(back.name, "Old XP");
+        assert_eq!(back.taskbar.retrobar_theme, "Windows XP Silver");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

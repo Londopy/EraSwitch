@@ -145,14 +145,14 @@ impl SettingsApp {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Save era as .londo...").clicked() {
-                let name = format!("{}.londo", e.name);
+            if ui.button("Save era as .londopy...").clicked() {
+                let name = format!("{}.londopy", e.name);
                 if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("EraSwitch era", &["londo"])
+                    .add_filter("EraSwitch era", &["londopy", "londo"])
                     .set_file_name(name)
                     .save_file()
                 {
-                    self.status_line = Some(match era::save_londo(e, &p) {
+                    self.status_line = Some(match era::save_londopy(e, &p) {
                         Ok(()) => format!("Saved {}", p.display()),
                         Err(err) => format!("Couldn't save: {err:#}"),
                     });
@@ -160,10 +160,10 @@ impl SettingsApp {
             }
             if ui.button("Open era...").clicked() {
                 if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("EraSwitch era", &["londo"])
+                    .add_filter("EraSwitch era", &["londopy", "londo"])
                     .pick_file()
                 {
-                    match era::open_londo(&p, &crate::config::data_dir()) {
+                    match era::open_londopy(&p, &crate::config::data_dir()) {
                         Ok(loaded) => {
                             self.status_line = Some(format!("Loaded '{}'", loaded.name));
                             *e = loaded;
