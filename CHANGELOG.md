@@ -4,6 +4,8 @@ All notable changes to EraSwitch are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-28
+
 ### Added
 
 - A Windows Vista era: RetroBar's Vista Aero taskbar with the orb, and Open-Shell's Windows 7-style menu in its Aero skin.
@@ -42,6 +44,7 @@ All notable changes to EraSwitch are listed here. The format follows [Keep a Cha
 - Finds RetroBar and Open-Shell, and installs them with winget from Settings.
 - Run at sign-in, Windows notifications, and an in-app updater that checks SHA-256 and installs only when you click.
 
-[Unreleased]: https://github.com/Londopy/EraSwitch/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Londopy/EraSwitch/compare/v0.2.0...HEAD
 [0.1.0]: https://github.com/Londopy/EraSwitch/releases/tag/v0.1.0
 [0.1.1]: https://github.com/Londopy/EraSwitch/compare/v0.1.0...v0.1.1
+[0.2.0]: https://github.com/Londopy/EraSwitch/compare/v0.1.1...v0.2.0
