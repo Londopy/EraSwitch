@@ -34,6 +34,7 @@ use config::AppConfig;
 // commands for the main loop, from the tray, the hotkey, settings and workers
 pub enum Cmd {
     Toggle,
+    PickEra(era::Preset),
     SwitchDone(Result<bool, String>),
     OpenSettings,
     ConfigUpdated(Box<AppConfig>),
@@ -165,6 +166,32 @@ fn not_installed_dialog(app: &str, homepage: &str) {
     } else {
         d.show();
     }
+}
+
+enum Switch {
+    On,
+    Off,
+    Across,
+}
+
+// runs a switch off the main thread (it takes a few seconds and the tray
+// should stay responsive), always reporting back with SwitchDone
+fn spawn_switch(kind: Switch, cfg: AppConfig, dir: PathBuf, tx: mpsc::Sender<Cmd>) {
+    std::thread::spawn(move || {
+        // a panic in here must still report back, or `busy` would stay set
+        // and the toggle would never work again
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match kind {
+            Switch::On => switch::apply(&cfg, &dir),
+            Switch::Off => switch::restore(&dir),
+            Switch::Across => switch::switch_across(&cfg, &dir),
+        }));
+        let done = match r {
+            Ok(Ok(())) => Ok(switch::is_active(&dir)),
+            Ok(Err(e)) => Err(format!("{e:#}")),
+            Err(_) => Err("The switch crashed; see debug.log".to_string()),
+        };
+        let _ = tx.send(Cmd::SwitchDone(done));
+    });
 }
 
 fn install_summary(ok: bool, lines: &[String]) -> String {
@@ -379,7 +406,10 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
             } else if ev.id == ids.exit {
                 Some(Cmd::Exit)
             } else {
-                None
+                ids.eras
+                    .iter()
+                    .find(|(id, _)| *id == ev.id)
+                    .map(|(_, p)| Cmd::PickEra(*p))
             };
             if let Some(c) = cmd {
                 let _ = cmd_tx.send(c);
@@ -459,27 +489,40 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
                     }
                     st.busy = true;
                     drop(st);
-                    let dir = data_dir.clone();
-                    let tx = cmd_tx.clone();
-                    // off the main thread: a switch takes a few seconds and the
-                    // tray should stay responsive meanwhile
-                    std::thread::spawn(move || {
-                        // a panic in here must still report back, or `busy`
-                        // would stay set and the toggle would never work again
-                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            if turn_on {
-                                switch::apply(&cfg, &dir)
-                            } else {
-                                switch::restore(&dir)
-                            }
-                        }));
-                        let done = match r {
-                            Ok(Ok(())) => Ok(switch::is_active(&dir)),
-                            Ok(Err(e)) => Err(format!("{e:#}")),
-                            Err(_) => Err("The switch crashed; see debug.log".to_string()),
-                        };
-                        let _ = tx.send(Cmd::SwitchDone(done));
-                    });
+                    let kind = if turn_on { Switch::On } else { Switch::Off };
+                    spawn_switch(kind, cfg, data_dir.clone(), cmd_tx.clone());
+                }
+
+                // the tray's Era menu: make that era the one, and if an era is
+                // on right now, go straight across to it
+                Cmd::PickEra(preset) => {
+                    let mut st = state_shared.lock().unwrap();
+                    if st.busy {
+                        continue;
+                    }
+                    let cfg = {
+                        let mut cfg = config_shared.lock().unwrap();
+                        if era::Preset::of(&cfg.era) == Some(preset) {
+                            continue;
+                        }
+                        cfg.era.apply_preset(preset);
+                        if let Err(e) = config::save_config(&cfg) {
+                            dlog!("saving the picked era failed: {e:#}");
+                        }
+                        cfg.clone()
+                    };
+                    tray::update(&tray_handle, &tray_state(&st, &cfg));
+                    if st.active {
+                        let missing = tools::missing(&cfg);
+                        if !missing.is_empty() {
+                            drop(st);
+                            offer_helpers(missing, cfg.tools.clone(), data_dir.clone(), false);
+                            continue;
+                        }
+                        st.busy = true;
+                        drop(st);
+                        spawn_switch(Switch::Across, cfg, data_dir.clone(), cmd_tx.clone());
+                    }
                 }
 
                 Cmd::SwitchDone(result) => {

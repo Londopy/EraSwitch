@@ -59,8 +59,8 @@ impl Default for TaskbarPiece {
     }
 }
 
-// RetroBar's XP themes, as named in its Themes folder
-pub const RETROBAR_XP_THEMES: &[&str] = &[
+// RetroBar's themes for the eras EraSwitch knows, as named in its Themes folder
+pub const RETROBAR_THEMES: &[&str] = &[
     "Windows XP Blue",
     "Windows XP Olive Green",
     "Windows XP Silver",
@@ -69,7 +69,66 @@ pub const RETROBAR_XP_THEMES: &[&str] = &[
     "Windows XP Zune Style",
     "Windows XP Embedded Style",
     "Windows XP Classic",
+    "Windows Vista Aero",
+    "Windows Vista Basic",
+    "Windows Vista Classic",
+    "Windows Longhorn Aero",
 ];
+
+// the built-in eras. a preset sets the name, the taskbar and the Start menu;
+// wallpaper and sounds are yours (Microsoft's originals can't ship), so
+// switching preset keeps whatever you picked for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preset {
+    WindowsXp,
+    WindowsVista,
+}
+
+impl Preset {
+    pub const ALL: [Preset; 2] = [Preset::WindowsXp, Preset::WindowsVista];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Preset::WindowsXp => "Windows XP",
+            Preset::WindowsVista => "Windows Vista",
+        }
+    }
+
+    fn pieces(self) -> (TaskbarPiece, StartMenuPiece) {
+        match self {
+            Preset::WindowsXp => (TaskbarPiece::default(), StartMenuPiece::default()),
+            // the Vista orb and black glass bar come from RetroBar's theme;
+            // Open-Shell's Windows 7 style with its Aero skin is the closest
+            // thing to Vista's two-column glass Start menu
+            Preset::WindowsVista => (
+                TaskbarPiece {
+                    enabled: true,
+                    retrobar_theme: "Windows Vista Aero".into(),
+                },
+                StartMenuPiece {
+                    enabled: true,
+                    menu_style: 2,
+                    skin: "Windows Aero".into(),
+                },
+            ),
+        }
+    }
+
+    // the preset this era is, if its name says so (a renamed era is custom)
+    pub fn of(era: &Era) -> Option<Preset> {
+        Preset::ALL.into_iter().find(|p| p.name() == era.name)
+    }
+}
+
+impl Era {
+    // turns this era into `preset`, keeping its wallpaper and sounds
+    pub fn apply_preset(&mut self, preset: Preset) {
+        let (taskbar, start_menu) = preset.pieces();
+        self.name = preset.name().into();
+        self.taskbar = taskbar;
+        self.start_menu = start_menu;
+    }
+}
 
 // Open-Shell replaces the Start menu
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -262,10 +321,62 @@ mod tests {
 
     #[test]
     fn every_built_in_name_is_safe() {
-        for t in RETROBAR_XP_THEMES {
+        for t in RETROBAR_THEMES {
             assert!(safe_name(t), "{t}");
         }
         assert!(Era::default().validate().is_ok());
+        for p in Preset::ALL {
+            let mut e = Era::default();
+            e.apply_preset(p);
+            assert!(e.validate().is_ok(), "{}", p.name());
+            assert!(
+                RETROBAR_THEMES.contains(&e.taskbar.retrobar_theme.as_str()),
+                "{} uses a theme the picker doesn't list",
+                p.name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_era_is_the_xp_preset() {
+        let mut xp = Era::default();
+        xp.apply_preset(Preset::WindowsXp);
+        assert_eq!(xp, Era::default());
+        assert_eq!(Preset::of(&Era::default()), Some(Preset::WindowsXp));
+    }
+
+    #[test]
+    fn vista_uses_the_windows_7_style_aero_menu() {
+        let mut e = Era::default();
+        e.apply_preset(Preset::WindowsVista);
+        assert_eq!(e.name, "Windows Vista");
+        assert_eq!(e.taskbar.retrobar_theme, "Windows Vista Aero");
+        assert_eq!(e.start_menu.menu_style, 2);
+        assert_eq!(e.start_menu.skin, "Windows Aero");
+        // Open-Shell keeps the Windows 7 style's skin under its own value
+        assert_eq!(crate::openshell::skin_value_name(2), "SkinW7");
+        assert_eq!(Preset::of(&e), Some(Preset::WindowsVista));
+    }
+
+    #[test]
+    fn presets_keep_your_wallpaper_and_sounds() {
+        let mut e = Era {
+            wallpaper: WallpaperPiece {
+                enabled: true,
+                path: "C:/pics/bliss.jpg".into(),
+            },
+            sounds: SoundsPiece {
+                enabled: true,
+                scheme: "XP".into(),
+            },
+            ..Default::default()
+        };
+        e.apply_preset(Preset::WindowsVista);
+        assert_eq!(e.wallpaper.path, "C:/pics/bliss.jpg");
+        assert_eq!(e.sounds.scheme, "XP");
+        // a renamed era is nobody's preset
+        e.name = "My Vista".into();
+        assert_eq!(Preset::of(&e), None);
     }
 
     #[test]

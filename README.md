@@ -12,12 +12,13 @@
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org)
 [![Windows](https://img.shields.io/badge/platform-Windows%2010%2B-0078D6)](#install)
 
-**Windows XP on the outside, Windows 11 underneath, one click apart.**
+**Windows XP or Vista on the outside, Windows 11 underneath, one click apart.**
 
 EraSwitch is a tray app that switches your desktop to a Windows XP look (the green **start**
-button, the Luna Start menu, the blue taskbar) and back to stock Windows 11 with one click or
-one hotkey. Your PC keeps working exactly the same: same apps, same updates, same everything.
-Only the shell changes.
+button, the Luna Start menu, the blue taskbar) or a Windows Vista one (the round orb, the glass
+taskbar and Start menu), and back to stock Windows 11 with one click or one hotkey. Your PC
+keeps working exactly the same: same apps, same updates, same everything. Only the shell
+changes.
 
 ## What it looks like
 
@@ -34,6 +35,17 @@ Only the shell changes.
 
 <p align="center">
   <img src="docs/screenshots/start-menu-xp.png" alt="The Windows XP Luna Start menu drawn by Open-Shell" width="300">
+</p>
+
+**Or pick Windows Vista from the tray's Era menu:** RetroBar's Vista Aero taskbar with the
+orb...
+
+![The Windows Vista taskbar drawn by RetroBar](docs/screenshots/taskbar-vista.png)
+
+**...and Open-Shell's Windows 7-style menu in its Aero skin, the closest thing to Vista's:**
+
+<p align="center">
+  <img src="docs/screenshots/start-menu-vista.png" alt="The Windows Vista style Start menu drawn by Open-Shell" width="300">
 </p>
 
 Click the tray icon again and it's the first picture again. (Window titles and the account
@@ -57,9 +69,13 @@ name are blurred in these shots.)
   Windows 11 back; if EraSwitch is killed outright, start it again and switch back, or run
   `EraSwitch.exe --restore`. With "start when I sign in" on, a reboot in XP mode comes back
   in XP mode.
-- **The pieces are yours to pick.** Taskbar (any of RetroBar's XP themes: Blue, Olive Green,
-  Silver, Royale...), Start menu (Open-Shell's XP Luna skin), wallpaper and sound scheme, each
-  on or off.
+- **Two eras built in.** Windows XP and Windows Vista, picked from the tray's **Era** menu or
+  Settings. Picking one while another is on switches straight across (through Windows 11, so
+  nothing of the old era is left behind).
+- **The pieces are yours to pick.** Taskbar (any of RetroBar's XP or Vista themes: XP Blue,
+  Olive Green, Silver, Royale, Vista Aero, Basic, Longhorn...), Start menu (Open-Shell's XP
+  Luna or Vista-style Aero skin), wallpaper and sound scheme, each on or off. Picking an era
+  keeps your wallpaper and sound choices.
 - **Eras are files.** Save your setup as a `.londopy` file (wallpaper included) and share it.
 - **No admin rights.** Everything EraSwitch changes is per-user. (Installing RetroBar or
   Open-Shell the first time may ask for admin rights; that's their installers.)
@@ -126,7 +142,7 @@ to Microsoft and EraSwitch can't ship them:
 - *Sounds:* in Control Panel > Sound, set up the sounds you want and **Save As** a scheme
   (say "Windows XP"), then pick that scheme in EraSwitch.
 
-Stuck in XP for any reason? Run `EraSwitch.exe --restore`.
+Stuck in XP or Vista for any reason? Run `EraSwitch.exe --restore`.
 
 ## .londopy files
 
@@ -157,7 +173,7 @@ retrobar_theme = "Windows XP Blue"   # any RetroBar theme name
 
 [era.start_menu]
 enabled = true
-menu_style = 1                       # 0 classic, 1 two columns (XP), 2 Windows 7
+menu_style = 1                       # 0 classic, 1 two columns (XP), 2 Windows 7 (Vista)
 skin = "Windows XP Luna"
 
 [era.wallpaper]

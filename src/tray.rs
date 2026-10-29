@@ -3,7 +3,11 @@
 // app needs no image files: blue for Windows 11, XP green while the era is on.
 
 use anyhow::Result;
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{
+    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+};
+
+use crate::era::Preset;
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 pub const ICON_SIZE: usize = 32;
@@ -18,6 +22,8 @@ pub struct MenuIds {
     pub settings: MenuId,
     pub restart: MenuId,
     pub exit: MenuId,
+    // the Era submenu: one entry per built-in era
+    pub eras: Vec<(MenuId, Preset)>,
 }
 
 pub struct TrayHandle {
@@ -25,6 +31,7 @@ pub struct TrayHandle {
     pub ids: MenuIds,
     toggle_item: MenuItem,
     update_item: MenuItem,
+    era_items: Vec<(CheckMenuItem, Preset)>,
 }
 
 // what the tray shows; main.rs keeps this in step with reality
@@ -114,8 +121,19 @@ pub fn build(s: &TrayState) -> Result<TrayHandle> {
     let restart = MenuItem::new("Restart", true, None);
     let exit = MenuItem::new("Exit", true, None);
 
+    // pick an era; ticked when the current one is that preset
+    let era_menu = Submenu::new("Era", true);
+    let era_items: Vec<(CheckMenuItem, Preset)> = Preset::ALL
+        .into_iter()
+        .map(|p| (CheckMenuItem::new(p.name(), true, false, None), p))
+        .collect();
+    for (item, _) in &era_items {
+        era_menu.append(item)?;
+    }
+
     let menu = Menu::new();
     menu.append(&toggle_item)?;
+    menu.append(&era_menu)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&update_item)?;
     menu.append(&settings)?;
@@ -137,12 +155,17 @@ pub fn build(s: &TrayState) -> Result<TrayHandle> {
         settings: settings.id().clone(),
         restart: restart.id().clone(),
         exit: exit.id().clone(),
+        eras: era_items
+            .iter()
+            .map(|(i, p)| (i.id().clone(), *p))
+            .collect(),
     };
     let handle = TrayHandle {
         tray,
         ids,
         toggle_item,
         update_item,
+        era_items,
     };
     update(&handle, s);
     Ok(handle)
@@ -150,6 +173,9 @@ pub fn build(s: &TrayState) -> Result<TrayHandle> {
 
 pub fn update(h: &TrayHandle, s: &TrayState) {
     h.toggle_item.set_text(toggle_label(s));
+    for (item, preset) in &h.era_items {
+        item.set_checked(preset.name() == s.era_name);
+    }
     match s.update {
         Some(v) => {
             h.update_item.set_text(format!("Update to v{v}..."));

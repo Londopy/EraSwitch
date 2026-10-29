@@ -4,7 +4,7 @@
 use egui::{Color32, Ui};
 
 use super::SettingsApp;
-use crate::era::{self, RETROBAR_XP_THEMES};
+use crate::era::{self, RETROBAR_THEMES};
 use crate::tools::{self, Tool};
 
 const MENU_STYLES: [(u32, &str); 3] = [
@@ -39,6 +39,25 @@ impl SettingsApp {
         let e = &mut self.config.era;
         let mut changed = false;
 
+        // the built-in eras; your wallpaper and sound picks carry over
+        ui.horizontal(|ui| {
+            ui.label("Start from:");
+            let current = era::Preset::of(e);
+            for preset in era::Preset::ALL {
+                if ui
+                    .selectable_label(current == Some(preset), preset.name())
+                    .on_hover_text(
+                        "Sets the taskbar and Start menu; keeps your wallpaper and sounds",
+                    )
+                    .clicked()
+                    && current != Some(preset)
+                {
+                    e.apply_preset(preset);
+                    changed = true;
+                }
+            }
+        });
+
         ui.horizontal(|ui| {
             ui.label("Name:");
             changed |= ui.text_edit_singleline(&mut e.name).changed();
@@ -55,7 +74,7 @@ impl SettingsApp {
                 egui::ComboBox::from_id_salt("retrobar_theme")
                     .selected_text(e.taskbar.retrobar_theme.clone())
                     .show_ui(ui, |ui| {
-                        for t in RETROBAR_XP_THEMES {
+                        for t in RETROBAR_THEMES {
                             changed |= ui
                                 .selectable_value(&mut e.taskbar.retrobar_theme, t.to_string(), *t)
                                 .changed();
@@ -172,10 +191,6 @@ impl SettingsApp {
                         Err(err) => self.status_line = Some(format!("Couldn't open: {err:#}")),
                     }
                 }
-            }
-            if ui.button("Reset to Windows XP").clicked() {
-                *e = era::Era::default();
-                changed = true;
             }
         });
 

@@ -188,6 +188,20 @@ pub fn restore(data_dir: &Path) -> Result<()> {
     restore_with(&Real, data_dir)
 }
 
+// from one era straight to another (the tray's Era menu while one is on)
+pub fn switch_across(cfg: &AppConfig, data_dir: &Path) -> Result<()> {
+    let _g = lock();
+    across_with(&Real, cfg, data_dir)
+}
+
+// Windows 11 comes back first, so the new era's snapshot records Windows 11,
+// not the old era. if the new era then fails, apply's own rollback leaves you
+// on Windows 11 rather than half of each.
+pub fn across_with(p: &dyn Pieces, cfg: &AppConfig, data_dir: &Path) -> Result<()> {
+    restore_with(p, data_dir).context("Switching the old era off")?;
+    apply_with(p, cfg, data_dir)
+}
+
 // for the panic hook: if a switch is mid-way on another thread, don't wait
 // for it (that thread may be the one panicking); the next start finishes it
 pub fn try_restore(data_dir: &Path) {
@@ -550,6 +564,44 @@ mod tests {
         f.calls.borrow_mut().clear();
         resume_with(&f, &d).unwrap();
         assert_eq!(f.calls(), vec!["restore_start"]);
+        assert!(!is_active(&d));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn switching_across_goes_through_windows_11() {
+        let d = temp_dir("across");
+        let f = Fake::new(&d);
+        apply_with(&f, &cfg(), &d).unwrap();
+        f.calls.borrow_mut().clear();
+
+        let mut vista = cfg();
+        vista.era.apply_preset(crate::era::Preset::WindowsVista);
+        across_with(&f, &vista, &d).unwrap();
+        assert_eq!(
+            f.calls(),
+            vec![
+                "restore_taskbar",
+                "restore_start",
+                "apply_start",
+                "apply_taskbar"
+            ]
+        );
+        let snap = load(&d).unwrap().unwrap();
+        assert_eq!(snap.era_name, "Windows Vista");
+        assert!(!snap.restoring);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_failed_switch_across_ends_on_windows_11() {
+        let d = temp_dir("across-fail");
+        let f = Fake::new(&d);
+        apply_with(&f, &cfg(), &d).unwrap();
+        f.fail.borrow_mut().push("apply_taskbar");
+        let mut vista = cfg();
+        vista.era.apply_preset(crate::era::Preset::WindowsVista);
+        assert!(across_with(&f, &vista, &d).is_err());
         assert!(!is_active(&d));
         let _ = std::fs::remove_dir_all(&d);
     }
