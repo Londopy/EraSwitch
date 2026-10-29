@@ -194,10 +194,13 @@ pub fn switch_across(cfg: &AppConfig, data_dir: &Path) -> Result<()> {
     across_with(&Real, cfg, data_dir)
 }
 
-// Windows 11 comes back first, so the new era's snapshot records Windows 11,
-// not the old era. if the new era then fails, apply's own rollback leaves you
-// on Windows 11 rather than half of each.
+// the new era's checks run first, so a missing helper or wallpaper keeps you
+// in the old era instead of dropping you on Windows 11. then Windows 11 comes
+// back, so the new era's snapshot records Windows 11, not the old era; if the
+// new era still fails, apply's own rollback leaves you on Windows 11 rather
+// than half of each.
 pub fn across_with(p: &dyn Pieces, cfg: &AppConfig, data_dir: &Path) -> Result<()> {
+    preflight(cfg).context("The new era isn't ready, so nothing changed")?;
     restore_with(p, data_dir).context("Switching the old era off")?;
     apply_with(p, cfg, data_dir)
 }
@@ -217,14 +220,12 @@ pub fn resume(data_dir: &Path) -> Result<()> {
 
 // switches to the era in `cfg`. on a failure halfway, whatever was already
 // changed is put back before the error comes back.
-pub fn apply_with(p: &dyn Pieces, cfg: &AppConfig, data_dir: &Path) -> Result<()> {
-    if is_active(data_dir) {
-        return Ok(());
-    }
+// everything an era needs, checked without changing anything: valid names,
+// the helper programs (their paths come back), the wallpaper file, the sound
+// scheme, and at least one piece switched on
+fn preflight(cfg: &AppConfig) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
     let era = &cfg.era;
     era.validate()?;
-
-    // find everything we need before touching anything
     let retrobar_exe = if era.taskbar.enabled {
         Some(tools::require(Tool::RetroBar, &cfg.tools)?)
     } else {
@@ -258,6 +259,16 @@ pub fn apply_with(p: &dyn Pieces, cfg: &AppConfig, data_dir: &Path) -> Result<()
     {
         bail!("Every piece of this era is switched off in Settings");
     }
+    Ok((retrobar_exe, openshell_exe))
+}
+
+pub fn apply_with(p: &dyn Pieces, cfg: &AppConfig, data_dir: &Path) -> Result<()> {
+    if is_active(data_dir) {
+        return Ok(());
+    }
+    let era = &cfg.era;
+    // find everything we need before touching anything
+    let (retrobar_exe, openshell_exe) = preflight(cfg)?;
 
     // 1. remember Windows 11, on disk, first
     let snap = Snapshot {
@@ -589,6 +600,24 @@ mod tests {
         );
         let snap = load(&d).unwrap().unwrap();
         assert_eq!(snap.era_name, "Windows Vista");
+        assert!(!snap.restoring);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_new_era_that_isnt_ready_leaves_the_old_one_on() {
+        let d = temp_dir("across-not-ready");
+        let f = Fake::new(&d);
+        apply_with(&f, &cfg(), &d).unwrap();
+        f.calls.borrow_mut().clear();
+        let mut vista = cfg();
+        vista.era.apply_preset(crate::era::Preset::WindowsVista);
+        vista.era.wallpaper.enabled = true;
+        vista.era.wallpaper.path = r"Z:\no\such\picture.jpg".into();
+        assert!(across_with(&f, &vista, &d).is_err());
+        assert!(f.calls().is_empty(), "nothing may change: {:?}", f.calls());
+        let snap = load(&d).unwrap().unwrap();
+        assert_eq!(snap.era_name, "Windows XP");
         assert!(!snap.restoring);
         let _ = std::fs::remove_dir_all(&d);
     }

@@ -17,4 +17,5 @@
 *.gif binary
 *.msi binary
 *.exe binary
+*.londopy binary
 *.londo binary

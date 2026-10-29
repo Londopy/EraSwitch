@@ -7,12 +7,13 @@ All notable changes to EraSwitch are listed here. The format follows [Keep a Cha
 ### Added
 
 - A Windows Vista era: RetroBar's Vista Aero taskbar with the orb, and Open-Shell's Windows 7-style menu in its Aero skin.
-- An Era menu in the tray and "Start from: Windows XP / Windows Vista" in Settings. Picking an era while another is on switches straight across, through Windows 11. Picking one keeps your wallpaper and sound choices.
+- An Era menu in the tray and "Start from: Windows XP / Windows Vista" in Settings. Picking an era while another is on switches straight across, through Windows 11, and only after checking the new one is ready, so a missing helper or wallpaper leaves the old era on. Picking one keeps your wallpaper, sounds and which pieces are switched on.
 - RetroBar's Vista themes (Aero, Basic, Classic, Longhorn Aero) in the taskbar theme list.
 
 ### Changed
 
-- Eras are saved as `.londopy` files, the new name of the format all Londopy apps share. `.londo` eras from 0.1.x still open from Settings or when dropped on the exe.
+- Eras are saved as `.londopy` files, the new name of the format all Londopy apps share. `.londo` eras from 0.1.x still open from Settings or when dropped on the exe, and other apps' `.londo` files are still passed on to them.
+- Settings' "Reset to Windows XP" button is replaced by "Start from: Windows XP", which resets the taskbar and Start menu the same way.
 
 ## [0.1.1] - 2026-10-21
 

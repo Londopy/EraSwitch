@@ -114,19 +114,29 @@ impl Preset {
         }
     }
 
-    // the preset this era is, if its name says so (a renamed era is custom)
+    // the preset this era is: its name and its look (theme, menu style, skin)
+    // both match. a renamed or restyled era is custom. on/off switches don't
+    // count, since picking a preset keeps them.
     pub fn of(era: &Era) -> Option<Preset> {
-        Preset::ALL.into_iter().find(|p| p.name() == era.name)
+        Preset::ALL.into_iter().find(|p| {
+            let (taskbar, start) = p.pieces();
+            p.name() == era.name
+                && taskbar.retrobar_theme == era.taskbar.retrobar_theme
+                && start.menu_style == era.start_menu.menu_style
+                && start.skin == era.start_menu.skin
+        })
     }
 }
 
 impl Era {
-    // turns this era into `preset`, keeping its wallpaper and sounds
+    // turns this era into `preset`: its name and look. wallpaper, sounds and
+    // which pieces are switched on stay as you set them.
     pub fn apply_preset(&mut self, preset: Preset) {
         let (taskbar, start_menu) = preset.pieces();
         self.name = preset.name().into();
-        self.taskbar = taskbar;
-        self.start_menu = start_menu;
+        self.taskbar.retrobar_theme = taskbar.retrobar_theme;
+        self.start_menu.menu_style = start_menu.menu_style;
+        self.start_menu.skin = start_menu.skin;
     }
 }
 
@@ -377,6 +387,31 @@ mod tests {
         // a renamed era is nobody's preset
         e.name = "My Vista".into();
         assert_eq!(Preset::of(&e), None);
+    }
+
+    #[test]
+    fn presets_keep_which_pieces_are_on() {
+        let mut e = Era::default();
+        e.start_menu.enabled = false;
+        e.apply_preset(Preset::WindowsVista);
+        assert!(
+            !e.start_menu.enabled,
+            "turning Open-Shell off must survive a preset"
+        );
+        assert!(e.taskbar.enabled);
+        // and on/off doesn't stop it being the preset
+        assert_eq!(Preset::of(&e), Some(Preset::WindowsVista));
+    }
+
+    #[test]
+    fn a_restyled_era_is_custom_until_reset() {
+        // an untouched-name 0.1.x era with another theme isn't "Windows XP"
+        let mut e = Era::default();
+        e.taskbar.retrobar_theme = "Windows XP Silver".into();
+        assert_eq!(Preset::of(&e), None);
+        // so picking Windows XP is a reset again
+        e.apply_preset(Preset::WindowsXp);
+        assert_eq!(e, Era::default());
     }
 
     #[test]

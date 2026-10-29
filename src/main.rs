@@ -223,7 +223,7 @@ fn offer_helpers(
             .collect::<Vec<_>>()
             .join(" and ");
         let why = if first_run {
-            format!("Welcome to EraSwitch! It draws the XP look with {names}, which aren't installed yet.")
+            format!("Welcome to EraSwitch! It draws the older Windows looks with {names}, which aren't installed yet.")
         } else {
             format!("Switching needs {names}, which aren't installed yet.")
         };
@@ -273,6 +273,7 @@ fn tray_state<'a>(state: &'a AppState, cfg: &'a AppConfig) -> tray::TrayState<'a
     tray::TrayState {
         active: state.active,
         era_name: &cfg.era.name,
+        preset: era::Preset::of(&cfg.era),
         hotkey: &cfg.hotkeys.toggle,
         update: state.update.as_deref(),
     }
@@ -498,21 +499,28 @@ fn run(open_now: Option<PathBuf>) -> Result<()> {
                 Cmd::PickEra(preset) => {
                     let mut st = state_shared.lock().unwrap();
                     if st.busy {
+                        // the menu ticked the clicked item itself: put it back
+                        let cfg = config_shared.lock().unwrap().clone();
+                        tray::update(&tray_handle, &tray_state(&st, &cfg));
                         continue;
                     }
-                    let cfg = {
+                    let (cfg, changed) = {
                         let mut cfg = config_shared.lock().unwrap();
-                        if era::Preset::of(&cfg.era) == Some(preset) {
-                            continue;
+                        let changed = era::Preset::of(&cfg.era) != Some(preset);
+                        if changed {
+                            cfg.era.apply_preset(preset);
+                            if let Err(e) = config::save_config(&cfg) {
+                                dlog!("saving the picked era failed: {e:#}");
+                            }
                         }
-                        cfg.era.apply_preset(preset);
-                        if let Err(e) = config::save_config(&cfg) {
-                            dlog!("saving the picked era failed: {e:#}");
-                        }
-                        cfg.clone()
+                        (cfg.clone(), changed)
                     };
+                    // always redraw: the menu flips a check item on every click
                     tray::update(&tray_handle, &tray_state(&st, &cfg));
-                    if st.active {
+                    // what's on screen right now, which the config can be ahead of
+                    let applied = switch::load(&data_dir).ok().flatten().map(|s| s.era_name);
+                    let needs_switch = changed || applied.as_deref() != Some(preset.name());
+                    if st.active && needs_switch {
                         let missing = tools::missing(&cfg);
                         if !missing.is_empty() {
                             drop(st);

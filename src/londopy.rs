@@ -162,10 +162,17 @@ impl LondopyFile {
             std::fs::File::open(path).with_context(|| format!("Opening {}", path.display()))?;
         let mut archive = zip::ZipArchive::new(file)
             .with_context(|| format!("{} is not a .londopy file (not a zip)", path.display()))?;
-        let raw = read_capped(&mut archive, MANIFEST_NAME, MAX_MANIFEST_BYTES)
-            // legacy: a .londo from before the rename carries londo.toml
-            .or_else(|_| read_capped(&mut archive, LEGACY_MANIFEST_NAME, MAX_MANIFEST_BYTES))
-            .with_context(|| format!("{} has no readable londopy.toml", path.display()))?;
+        // legacy: a .londo from before the rename carries londo.toml instead.
+        // only fall back when londopy.toml is absent, so a londopy.toml that's
+        // there but bad (too big, say) reports its own error
+        let has_current = archive.index_for_name(MANIFEST_NAME).is_some();
+        let name = if has_current || archive.index_for_name(LEGACY_MANIFEST_NAME).is_none() {
+            MANIFEST_NAME
+        } else {
+            LEGACY_MANIFEST_NAME
+        };
+        let raw = read_capped(&mut archive, name, MAX_MANIFEST_BYTES)
+            .with_context(|| format!("{} has no readable {name}", path.display()))?;
         let text = String::from_utf8(raw).context("londopy.toml is not UTF-8")?;
         let manifest: Manifest = toml::from_str(&text).context("Parsing londopy.toml")?;
         manifest.validate()?;
@@ -266,6 +273,18 @@ pub fn dispatch(path: &Path) -> Result<Dispatch> {
             .with_context(|| format!("Starting {}", exe.display()))?;
         return Ok(Dispatch::Forwarded { app: manifest.app });
     }
+    // legacy: an app from before the rename (registered under the old key)
+    // still opens its own .londo files, with the old flag
+    if let Some(exe) = legacy::app_exe(&legacy::Keys::real(), &manifest.app).filter(|e| e.is_file())
+    {
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        std::process::Command::new(&exe)
+            .arg("--londo-open")
+            .arg(abs)
+            .spawn()
+            .with_context(|| format!("Starting {}", exe.display()))?;
+        return Ok(Dispatch::Forwarded { app: manifest.app });
+    }
     let homepage = if manifest.homepage.starts_with("https://") {
         manifest.homepage
     } else {
@@ -359,17 +378,21 @@ pub fn register_self() -> Result<()> {
 // double-click to another installed Londopy app, or remove it if none is left
 pub fn unregister_self() -> Result<()> {
     let exe = std::env::current_exe()?;
-    registry::remove_app(APP_ID)?;
-    let owner = registry::handler_command().and_then(|c| parse_command_exe(&c));
-    let we_own_it = owner.as_ref().is_some_and(|o| same_path(o, &exe));
-    if we_own_it {
-        match pick_new_owner(&registry::apps(), APP_ID) {
-            Some(next) => registry::set_handler(&next)?,
-            None => registry::remove_handler()?,
+    let current = (|| -> Result<()> {
+        registry::remove_app(APP_ID)?;
+        let owner = registry::handler_command().and_then(|c| parse_command_exe(&c));
+        let we_own_it = owner.as_ref().is_some_and(|o| same_path(o, &exe));
+        if we_own_it {
+            match pick_new_owner(&registry::apps(), APP_ID) {
+                Some(next) => registry::set_handler(&next)?,
+                None => registry::remove_handler()?,
+            }
         }
-    }
-    legacy::unregister(&exe)?;
-    Ok(())
+        Ok(())
+    })();
+    // the old .londo registration goes too, even if the step above failed
+    let old = legacy::unregister_at(&legacy::Keys::real(), &exe);
+    current.and(old)
 }
 
 // ---- legacy .londo (EraSwitch-specific, not in the template) ----------------
@@ -395,51 +418,102 @@ mod legacy {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
 
-    const APPS_KEY: &str = r"Software\Londopy\Londo\Apps";
-    const COMMAND: &str = r"Software\Classes\Londopy.Londo\shell\open\command";
+    const PROG_ID: &str = "Londopy.Londo";
+
+    // where 0.1.x-era apps registered, under HKCU (tests point it elsewhere)
+    pub struct Keys {
+        pub apps: String,
+        pub classes: String,
+    }
+
+    impl Keys {
+        pub fn real() -> Self {
+            Keys {
+                apps: r"Software\Londopy\Londo\Apps".into(),
+                classes: r"Software\Classes".into(),
+            }
+        }
+    }
+
+    fn hkcu() -> RegKey {
+        RegKey::predef(HKEY_CURRENT_USER)
+    }
+
+    // the exe a 0.1.x-era app registered, to forward its .londo files to
+    pub fn app_exe(keys: &Keys, id: &str) -> Option<PathBuf> {
+        let e: String = hkcu()
+            .open_subkey(format!(r"{}\{id}", keys.apps))
+            .ok()?
+            .get_value("Exe")
+            .ok()?;
+        Some(PathBuf::from(e))
+    }
+
+    fn apps(keys: &Keys) -> Vec<(String, PathBuf)> {
+        let Ok(apps) = hkcu().open_subkey(&keys.apps) else {
+            return Vec::new();
+        };
+        apps.enum_keys()
+            .flatten()
+            .filter_map(|id| {
+                let e: String = apps.open_subkey(&id).ok()?.get_value("Exe").ok()?;
+                Some((id, PathBuf::from(e)))
+            })
+            .collect()
+    }
 
     // forget 0.1.x's registration; if `.londo` double-clicks still go to this
-    // exe, hand them to another app registered there, or drop the association
-    pub fn unregister(exe: &Path) -> Result<()> {
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let _ = hkcu.delete_subkey_all(format!(r"{APPS_KEY}\{}", super::APP_ID));
+    // exe, hand them to another app registered there, or drop the association.
+    // `.londo` itself is only removed while it still names our old ProgID.
+    pub fn unregister_at(keys: &Keys, exe: &Path) -> Result<()> {
+        let hkcu = hkcu();
+        let _ = hkcu.delete_subkey_all(format!(r"{}\{}", keys.apps, super::APP_ID));
+        let prog = format!(r"{}\{PROG_ID}", keys.classes);
         let owner = hkcu
-            .open_subkey(COMMAND)
+            .open_subkey(format!(r"{prog}\shell\open\command"))
             .and_then(|k| k.get_value::<String, _>(""))
             .ok()
             .and_then(|c| super::parse_command_exe(&c));
         if !owner.is_some_and(|o| super::same_path(&o, exe)) {
             return Ok(());
         }
-        let others: Vec<(String, PathBuf)> = hkcu
-            .open_subkey(APPS_KEY)
-            .map(|apps| {
-                apps.enum_keys()
-                    .flatten()
-                    .filter_map(|id| {
-                        let e: String = apps.open_subkey(&id).ok()?.get_value("Exe").ok()?;
-                        Some((id, PathBuf::from(e)))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        match super::pick_new_owner(&others, super::APP_ID) {
+        match super::pick_new_owner(&apps(keys), super::APP_ID) {
             Some(next) => {
-                let (k, _) = hkcu.create_subkey(COMMAND)?;
-                k.set_value("", &format!("\"{}\" --londo-open \"%1\"", next.display()))?;
+                let (p, _) = hkcu.create_subkey(&prog)?;
+                let (icon, _) = p.create_subkey("DefaultIcon")?;
+                icon.set_value("", &format!("\"{}\",0", next.display()))?;
+                let (cmd, _) = p.create_subkey(r"shell\open\command")?;
+                cmd.set_value("", &format!("\"{}\" --londo-open \"%1\"", next.display()))?;
             }
             None => {
-                let _ = hkcu.delete_subkey_all(r"Software\Classes\Londopy.Londo");
-                let _ = hkcu.delete_subkey_all(r"Software\Classes\.londo");
+                let _ = hkcu.delete_subkey_all(&prog);
+                let ext = format!(r"{}\.londo", keys.classes);
+                let ours = hkcu
+                    .open_subkey(&ext)
+                    .and_then(|k| k.get_value::<String, _>(""))
+                    .is_ok_and(|v| v == PROG_ID);
+                if ours {
+                    let _ = hkcu.delete_subkey_all(&ext);
+                }
             }
         }
+        super::registry::notify_shell();
         Ok(())
     }
 }
 
 #[cfg(not(windows))]
 mod legacy {
-    pub fn unregister(_: &std::path::Path) -> anyhow::Result<()> {
+    pub struct Keys;
+    impl Keys {
+        pub fn real() -> Self {
+            Keys
+        }
+    }
+    pub fn app_exe(_: &Keys, _: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+    pub fn unregister_at(_: &Keys, _: &std::path::Path) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -536,7 +610,8 @@ mod registry {
     }
 
     // tells Explorer to refresh icons and the "Open" verb right away
-    fn notify_shell() {
+    // (pub(super): EraSwitch's legacy .londo cleanup uses it too)
+    pub(super) fn notify_shell() {
         use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
         // SAFETY: SHCNE_ASSOCCHANGED takes no item pointers
         unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
@@ -752,5 +827,171 @@ mod tests {
         ];
         assert_eq!(pick_new_owner(&cands, "a-leaving"), Some(alive));
         assert_eq!(pick_new_owner(&cands[..2], "a-leaving"), None);
+    }
+}
+
+// EraSwitch-specific: the legacy .londo paths
+#[cfg(all(test, windows))]
+mod legacy_tests {
+    use super::*;
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    fn a(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn old_flags_and_old_files_still_parse() {
+        assert_eq!(
+            parse_args(&a(&["app.exe", "--londo-unregister"])),
+            Some(LondopyArg::Unregister)
+        );
+        assert_eq!(
+            parse_args(&a(&["app.exe", "--londo-open", "C:/x/old.londo"])),
+            Some(LondopyArg::Open(PathBuf::from("C:/x/old.londo")))
+        );
+        assert_eq!(
+            parse_args(&a(&["app.exe", "D:/old.LONDO"])),
+            Some(LondopyArg::Open(PathBuf::from("D:/old.LONDO")))
+        );
+    }
+
+    #[test]
+    fn both_manifest_names_are_reserved() {
+        assert!(!safe_entry_name("londopy.toml"));
+        assert!(!safe_entry_name("londo.toml"));
+        assert!(safe_entry_name("era.toml"));
+    }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("eraswitch-legacy-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn an_oversized_old_manifest_is_refused() {
+        use std::io::Write;
+        let d = tmp("big");
+        let p = d.join("big.londo");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+            z.start_file("londo.toml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(&vec![b'#'; (MAX_MANIFEST_BYTES + 10) as usize])
+                .unwrap();
+            z.finish().unwrap();
+        }
+        let err = LondopyFile::open(&p).err().unwrap();
+        assert!(format!("{err:#}").contains("limit"), "{err:#}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // a throwaway HKCU tree standing in for the 0.1.x registration
+    fn keys(tag: &str) -> (legacy::Keys, String) {
+        let root = format!(
+            r"Software\EraSwitchTests\legacy-{tag}-{}",
+            std::process::id()
+        );
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&root);
+        let k = legacy::Keys {
+            apps: format!(r"{root}\Apps"),
+            classes: format!(r"{root}\Classes"),
+        };
+        (k, root)
+    }
+
+    fn set(path: &str, name: &str, value: &str) {
+        let (k, _) = RegKey::predef(HKEY_CURRENT_USER)
+            .create_subkey(path)
+            .unwrap();
+        k.set_value(name, &value.to_string()).unwrap();
+    }
+
+    fn get(path: &str) -> Option<String> {
+        RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(path)
+            .and_then(|k| k.get_value::<String, _>(""))
+            .ok()
+    }
+
+    const ME: &str = r"C:\Apps\EraSwitch\EraSwitch.exe";
+
+    fn own_londo(k: &legacy::Keys, exe: &str) {
+        set(&format!(r"{}\.londo", k.classes), "", "Londopy.Londo");
+        set(
+            &format!(r"{}\Londopy.Londo\shell\open\command", k.classes),
+            "",
+            &format!("\"{exe}\" --londo-open \"%1\""),
+        );
+        set(&format!(r"{}\eraswitch", k.apps), "Exe", ME);
+    }
+
+    #[test]
+    fn the_last_old_app_removes_the_association() {
+        let (k, root) = keys("last");
+        own_londo(&k, ME);
+        legacy::unregister_at(&k, Path::new(ME)).unwrap();
+        assert_eq!(get(&format!(r"{}\.londo", k.classes)), None);
+        assert_eq!(
+            get(&format!(r"{}\Londopy.Londo\shell\open\command", k.classes)),
+            None
+        );
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&root);
+    }
+
+    #[test]
+    fn a_londo_owned_by_another_progid_is_kept() {
+        let (k, root) = keys("other-progid");
+        own_londo(&k, ME);
+        set(&format!(r"{}\.londo", k.classes), "", "Someone.Else");
+        legacy::unregister_at(&k, Path::new(ME)).unwrap();
+        assert_eq!(
+            get(&format!(r"{}\.londo", k.classes)).as_deref(),
+            Some("Someone.Else")
+        );
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&root);
+    }
+
+    #[test]
+    fn another_old_app_takes_over_the_double_click() {
+        let (k, root) = keys("handoff");
+        own_londo(&k, ME);
+        // a real file, so pick_new_owner sees it as installed
+        let other = std::env::current_exe().unwrap();
+        set(
+            &format!(r"{}\reelsmith", k.apps),
+            "Exe",
+            &other.to_string_lossy(),
+        );
+        legacy::unregister_at(&k, Path::new(ME)).unwrap();
+        let cmd = get(&format!(r"{}\Londopy.Londo\shell\open\command", k.classes)).unwrap();
+        assert!(
+            cmd.contains(&*other.to_string_lossy()) && cmd.contains("--londo-open"),
+            "{cmd}"
+        );
+        let icon = get(&format!(r"{}\Londopy.Londo\DefaultIcon", k.classes)).unwrap();
+        assert!(icon.contains(&*other.to_string_lossy()), "{icon}");
+        assert_eq!(
+            get(&format!(r"{}\.londo", k.classes)).as_deref(),
+            Some("Londopy.Londo")
+        );
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&root);
+    }
+
+    #[test]
+    fn someone_elses_double_click_is_left_alone() {
+        let (k, root) = keys("not-ours");
+        own_londo(&k, r"C:\Apps\reelsmith\reelsmith.exe");
+        legacy::unregister_at(&k, Path::new(ME)).unwrap();
+        let cmd = get(&format!(r"{}\Londopy.Londo\shell\open\command", k.classes)).unwrap();
+        assert!(cmd.contains("reelsmith.exe"), "{cmd}");
+        // only our own old app entry went
+        assert!(RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(format!(r"{}\eraswitch", k.apps))
+            .is_err());
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&root);
     }
 }

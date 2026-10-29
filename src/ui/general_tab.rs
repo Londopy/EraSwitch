@@ -39,7 +39,10 @@ impl SettingsApp {
         let e = &mut self.config.era;
         let mut changed = false;
 
-        // the built-in eras; your wallpaper and sound picks carry over
+        // the built-in eras, the same as the tray's Era menu: the main loop
+        // updates the config (this window picks it up) and, if an era is on,
+        // switches straight across
+        let tx = self.cmd_tx.clone();
         ui.horizontal(|ui| {
             ui.label("Start from:");
             let current = era::Preset::of(e);
@@ -47,13 +50,11 @@ impl SettingsApp {
                 if ui
                     .selectable_label(current == Some(preset), preset.name())
                     .on_hover_text(
-                        "Sets the taskbar and Start menu; keeps your wallpaper and sounds",
+                        "Sets the taskbar and Start menu; keeps your wallpaper, sounds and which pieces are on",
                     )
                     .clicked()
-                    && current != Some(preset)
                 {
-                    e.apply_preset(preset);
-                    changed = true;
+                    let _ = tx.send(crate::Cmd::PickEra(preset));
                 }
             }
         });
@@ -167,7 +168,7 @@ impl SettingsApp {
             if ui.button("Save era as .londopy...").clicked() {
                 let name = format!("{}.londopy", e.name);
                 if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("EraSwitch era", &["londopy", "londo"])
+                    .add_filter("EraSwitch era", &["londopy"])
                     .set_file_name(name)
                     .save_file()
                 {

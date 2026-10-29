@@ -38,6 +38,8 @@ pub struct TrayHandle {
 pub struct TrayState<'a> {
     pub active: bool,
     pub era_name: &'a str,
+    // the built-in era this is, if any (ticked in the Era menu)
+    pub preset: Option<Preset>,
     pub hotkey: &'a str,
     pub update: Option<&'a str>,
 }
@@ -174,7 +176,7 @@ pub fn build(s: &TrayState) -> Result<TrayHandle> {
 pub fn update(h: &TrayHandle, s: &TrayState) {
     h.toggle_item.set_text(toggle_label(s));
     for (item, preset) in &h.era_items {
-        item.set_checked(preset.name() == s.era_name);
+        item.set_checked(s.preset == Some(*preset));
     }
     match s.update {
         Some(v) => {
@@ -222,6 +224,7 @@ mod tests {
         let mut s = TrayState {
             active: false,
             era_name: "Windows XP",
+            preset: Some(Preset::WindowsXp),
             hotkey: "ctrl+alt+e",
             update: None,
         };
